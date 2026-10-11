@@ -5,6 +5,7 @@ import datetime
 import hashlib
 import json
 import pathlib
+import re
 from urllib.parse import urlsplit
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -14,8 +15,8 @@ def generate(plugin, download_url):
     url = urlsplit(download_url)
     if url.scheme != 'https' or not url.netloc or url.username or url.password or url.query or url.fragment:
         raise ValueError('download_url must be an HTTPS directory URL')
-    if plugin.name != 'uficpy_plugin.js' or not plugin.is_file():
-        raise ValueError('Expected the actual uficpy_plugin.js file')
+    if not re.fullmatch(r'uficpy_plugin(?:-v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)?\.js', plugin.name) or not plugin.is_file():
+        raise ValueError('Expected an existing uficpy plugin file')
     data = plugin.read_bytes()
     modified = datetime.datetime.fromtimestamp(plugin.stat().st_mtime, datetime.timezone.utc).isoformat(timespec='seconds')
     item = {'name': plugin.name, 'modified': modified, 'size': len(data), 'is_dir': False,

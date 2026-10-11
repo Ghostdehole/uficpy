@@ -31,6 +31,10 @@ def main():
     p=argparse.ArgumentParser();p.add_argument('--tag',required=True);p.add_argument('--repository',default='Ghostdehole/uficpy');a=p.parse_args()
     if not re.fullmatch(r'[A-Za-z0-9_.-]{1,120}',a.tag) or not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+',a.repository):
         raise ValueError('Invalid tag/repository')
+    version=(ROOT/'VERSION').read_text().strip()
+    if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?',version):
+        raise ValueError('Invalid application version')
+    plugin_name=f'uficpy_plugin-v{version}.js'
     dist=ROOT/'dist';stage=dist/'stage'
     if stage.exists(): shutil.rmtree(stage)
     stage.mkdir(parents=True,exist_ok=True)
@@ -55,16 +59,20 @@ def main():
     with tarfile.open(dist/name,'w:gz') as archive:
         for file in sorted(stage.rglob('*')):
             if file.is_file():archive.add(file,arcname=file.relative_to(stage),recursive=False)
-    shutil.copyfile(ROOT/'uficpy_plugin.js',dist/'uficpy_plugin.js')
-    write_index(dist/'uficpy_plugin.js',f'https://github.com/{a.repository}/releases/download/{a.tag}',dist/'repo.json')
+    for old in [dist/'uficpy_plugin.js', *dist.glob('uficpy_plugin-v*.js')]:
+        old.unlink(missing_ok=True)
+    shutil.copyfile(ROOT/'uficpy_plugin.js',dist/plugin_name)
+    write_index(dist/plugin_name,f'https://github.com/{a.repository}/releases/download/{a.tag}',dist/'repo.json')
     write_index(ROOT/'uficpy_plugin.js',f'https://raw.githubusercontent.com/{a.repository}/main',ROOT/'repo.json')
     shutil.copyfile(ROOT/'core-lock.json',dist/'core-lock.json')
     checksum=hashlib.sha256((dist/name).read_bytes()).hexdigest()
-    manifest={'schema':1,'version':(ROOT/'VERSION').read_text().strip(),'tag':a.tag,'repository':a.repository,
-              'scrcpy_version':core['version'],'assets':{'arm64':{'name':name,'sha256':checksum,'size':(dist/name).stat().st_size}}}
+    manifest={'schema':1,'version':version,'tag':a.tag,'repository':a.repository,
+              'scrcpy_version':core['version'],'assets':{
+                  'arm64':{'name':name,'sha256':checksum,'size':(dist/name).stat().st_size},
+                  'plugin':{'name':plugin_name,'sha256':hashlib.sha256((dist/plugin_name).read_bytes()).hexdigest(),'size':(dist/plugin_name).stat().st_size}}}
     (dist/'release.json').write_text(json.dumps(manifest,indent=2)+'\n')
     source_zip(dist/'uficpy-source.zip')
-    checks=['uficpy-arm64.tar.gz','uficpy_plugin.js','repo.json','core-lock.json','release.json','uficpy-source.zip']
+    checks=['uficpy-arm64.tar.gz',plugin_name,'repo.json','core-lock.json','release.json','uficpy-source.zip']
     (dist/'SHA256SUMS').write_text(''.join(hashlib.sha256((dist/f).read_bytes()).hexdigest()+'  '+f+'\n' for f in checks))
     print(json.dumps(manifest,indent=2))
 

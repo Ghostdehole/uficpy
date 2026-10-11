@@ -2,6 +2,37 @@ const fs=require('fs'),path=require('path'),os=require('os'),cp=require('child_p
 
 module.exports=async function pluginTests(browser,origin,errors,root){
  const token='a'.repeat(64),config={...JSON.parse(fs.readFileSync(path.join(root,'config.json'))),token,port:19528};
+ const source=fs.readFileSync(path.join(root,'uficpy_plugin.js'),'utf8');
+ const marker=/<!--\s*\[KANO_PLUGIN_START\]\s*(.*?)\s*-->([\s\S]*?)<!--\s*\[KANO_PLUGIN_END\]\s*\1\s*-->/g;
+ const blocks=[...source.matchAll(marker)];
+ assert.equal(blocks.length,1);assert.equal(blocks[0][1],'uficpy_plugin.js');
+ const pluginSource=blocks[0][2].trim();
+ assert.doesNotThrow(()=>new Function(source));assert.doesNotThrow(()=>new Function(pluginSource));
+ if(process.env.UFICPY_UFI_MAIN){
+  const host=fs.readFileSync(process.env.UFICPY_UFI_MAIN,'utf8');
+  const begin=host.indexOf('const handlePluginFileUpload ='),end=host.indexOf('const exportPlugin =',begin);
+  assert.ok(begin>=0&&end>begin);
+  const probe=await browser.newPage();
+  await probe.setContent('<textarea id="custom_head"></textarea>');
+  const imports=await probe.evaluate(async({handler,source,pluginSource})=>{
+   const plugins=[],results=[];
+   const upload=new Function('t','createToast','plugins','renderPluginList',handler+';return handlePluginFileUpload;')(s=>s,()=>{},plugins,()=>{});
+   for(const [name,content] of [
+    ['uficpy_plugin.js',pluginSource.replaceAll('2.2.1','2.2.0')],
+    ['uficpy_plugin-v2.2.1.js',source],
+    ['uficpy_plugin-v2.2.2.js',source.replaceAll('2.2.1','2.2.2')]
+   ]){
+    await upload({target:{files:[new File([content],name,{type:'text/javascript'})]}});
+    results.push(plugins.map(item=>({...item})));
+   }
+   return results;
+  },{handler:host.slice(begin,end),source,pluginSource});
+  for(const snapshot of imports){assert.equal(snapshot.length,1);assert.equal(snapshot[0].name,'uficpy_plugin.js');assert.doesNotThrow(()=>new Function(snapshot[0].content));}
+  assert.match(imports[0][0].content,/const version = '2\.2\.0'/);
+  assert.equal(imports[1][0].content,pluginSource);
+  assert.match(imports[2][0].content,/const version = '2\.2\.2'/);
+  await probe.close();console.log('PASS: official UFI import handler replaces the fixed plugin identity across versioned filenames');
+ }
  if(process.env.UFICPY_UFI_REQUESTS){
   const text=fs.readFileSync(process.env.UFICPY_UFI_REQUESTS,'utf8');
   const begin=text.indexOf('const runShellWithRoot ='),end=text.indexOf('const runShellWithUser =',begin);
@@ -28,11 +59,11 @@ module.exports=async function pluginTests(browser,origin,errors,root){
     let content='running';
     if(cmd.includes("config.json")&&cmd.includes("timeout 2s awk"))content=window.testConfig;
     else if(cmd.includes('grep -qxF'))content=window.testBootEnabled?'yes':'no';
-    else if(cmd.includes('releases/latest/download/release.json'))content=JSON.stringify({schema:1,version:'2.2.0',scrcpy_version:'5.0.1',tag:'v2.2.0-test',repository:'Ghostdehole/uficpy',assets:{arm64:{name:'uficpy-arm64.tar.gz',sha256:'b'.repeat(64),size:1000000}}});
+    else if(cmd.includes('releases/latest/download/release.json'))content=JSON.stringify({schema:1,version:'2.2.1',scrcpy_version:'5.0.1',tag:'v2.2.1-test',repository:'Ghostdehole/uficpy',assets:{arm64:{name:'uficpy-arm64.tar.gz',sha256:'b'.repeat(64),size:1000000}}});
     return {success:true,content:content+'\nUFICPY_OK\n'};
    };
    window.createToast=(text)=>window.testToasts.push(text);
-   // Match the uploaded utils.js public contract: id is already a CSS selector.
+   // UFI utils.js returns modal IDs as CSS selectors.
    window.createModal=({name,title,content,onClose})=>{
     const el=document.createElement('div');el.id=name;el.innerHTML='<h3>'+title+'</h3>'+content;
     const close=document.createElement('button');close.id=name+'_close';close.textContent='关闭';close.onclick=()=>{if(onClose())el.remove();};el.appendChild(close);
@@ -46,14 +77,13 @@ module.exports=async function pluginTests(browser,origin,errors,root){
    };
    if(deniedStorage){Storage.prototype.getItem=Storage.prototype.setItem=Storage.prototype.removeItem=()=>{throw new DOMException('Storage denied','SecurityError');};}
   },{config,deniedStorage});
-  // Optional local compatibility run with the user's actual, unmodified utils.js.
-  // It is not a project dependency and is not redistributed in the source archive.
+  // Optional compatibility run against UFI's utils.js.
   if(process.env.UFICPY_UFI_UTILS){
    await p.evaluate(()=>{window.t=s=>s;window.Chart={register(){}};});
    await p.addScriptTag({content:fs.readFileSync(process.env.UFICPY_UFI_UTILS,'utf8')});
-   assert.deepEqual(errors,[], 'uploaded utils.js must load with its host dependencies');
+   assert.deepEqual(errors,[], 'UFI utils.js must load with its host dependencies');
   }
-  await p.addScriptTag({content:fs.readFileSync(path.join(root,'uficpy_plugin.js'),'utf8')});
+  await p.addScriptTag({content:pluginSource});
   await p.waitForSelector('#uficpy_status');
   await p.locator('#uficpy_advanced').evaluate(el=>el.parentElement.open=true);
   return p;
@@ -170,7 +200,7 @@ module.exports=async function pluginTests(browser,origin,errors,root){
  } finally { fs.rmSync(bootDir,{recursive:true,force:true}); }
  await click('安装 / 更新');
  const commands=await p.evaluate(()=>testCommands),download=commands.find(x=>x.cmd.includes('-o package.tar.gz')),check=commands.find(x=>x.cmd.includes('sha256sum -c checksum')),install=commands.find(x=>x.cmd.includes('sh extracted/install.sh'));
- assert.match(download.cmd,/releases\/download\/v2\.2\.0-test\/uficpy-arm64\.tar\.gz/);assert.match(download.cmd,/--max-time 55/);
+ assert.match(download.cmd,/releases\/download\/v2\.2\.1-test\/uficpy-arm64\.tar\.gz/);assert.match(download.cmd,/--max-time 55/);
  assert.match(check.cmd,/tar -tzf/);assert.ok(install);assert.notEqual(check,install);
  assert.ok(commands.every(x=>x.timeout<=90000));assert.ok(!commands.some(x=>x.cmd.includes('cat /data/uficpy/config.json')));
  if(process.env.UFICPY_SCREENSHOT_DIR){fs.mkdirSync(process.env.UFICPY_SCREENSHOT_DIR,{recursive:true});fs.writeFileSync(path.join(process.env.UFICPY_SCREENSHOT_DIR,'install-command.txt'),check.cmd);}

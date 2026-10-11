@@ -19,13 +19,13 @@ concurrency:
 jobs:
   release:
     if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       GH_TOKEN: ${{ github.token }}
       SCRCPY_REQUEST: ${{ inputs.scrcpy_version || 'latest' }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Download latest official scrcpy and verify compatibility
@@ -35,12 +35,12 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
         run: python3 scripts/release_needed.py
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         if: steps.check.outputs.needed == 'true'
         with:
           go-version: '1.27.x'
           cache: true
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: steps.check.outputs.needed == 'true'
         with:
           node-version: '24'
@@ -65,11 +65,15 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -buildvcs=false -trimpath -ldflags="-s -w -X main.appVersion=${APP_VERSION}" -o dist/uficpy .
           python3 scripts/package_release.py --tag "$RELEASE_TAG" --repository "$GITHUB_REPOSITORY"
           echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "plugin_asset=uficpy_plugin-v${APP_VERSION}.js" >> "$GITHUB_OUTPUT"
       - name: Upload complete release as draft, then publish atomically
         if: steps.check.outputs.needed == 'true'
         env:
           RELEASE_TAG: ${{ steps.package.outputs.tag }}
+          APP_VERSION: ${{ steps.package.outputs.app_version }}
+          PLUGIN_ASSET: ${{ steps.package.outputs.plugin_asset }}
         run: |
           python3 scripts/release_notes.py > dist/release-notes.md
-          gh release create "$RELEASE_TAG" dist/uficpy-arm64.tar.gz dist/uficpy-source.zip dist/uficpy_plugin.js dist/repo.json dist/release.json dist/core-lock.json dist/SHA256SUMS --draft --target "$GITHUB_SHA" --title "uficpy $RELEASE_TAG" --notes-file dist/release-notes.md
+          gh release create "$RELEASE_TAG" dist/uficpy-arm64.tar.gz dist/uficpy-source.zip "dist/$PLUGIN_ASSET" dist/repo.json dist/release.json dist/core-lock.json dist/SHA256SUMS --draft --target "$GITHUB_SHA" --title "uficpy $APP_VERSION" --notes-file dist/release-notes.md
           gh release edit "$RELEASE_TAG" --draft=false --latest

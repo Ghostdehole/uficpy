@@ -99,4 +99,4 @@ if ! sh "$TARGET/service.sh" start; then
 fi
 COMMITTED=1
 echo "安装完成。旧版备份（如果原目录存在）：$BACKUP"
-echo '请在 UFI-TOOLS 中替换 uficpy_plugin.js，然后点击“刷新状态”并打开投屏。'
+echo '请在管理插件中刷新状态。'

@@ -33,3 +33,14 @@ class PluginSourceTests(unittest.TestCase):
         for url in ['https://example.com/repo?query', 'http://example.com', 'https://user:pass@example.com']:
             with self.assertRaises(ValueError):
                 module.generate(ROOT/'uficpy_plugin.js', url)
+
+    def test_versioned_release_plugin_uses_actual_name(self):
+        with tempfile.TemporaryDirectory() as folder:
+            plugin = pathlib.Path(folder)/'uficpy_plugin-v2.2.1.js'
+            plugin.write_text('// plugin\n')
+            data = module.generate(plugin, 'https://github.com/Ghostdehole/uficpy/releases/download/v2.2.1')
+            self.assertEqual(data['res']['data']['content'][0]['name'], plugin.name)
+            wrong = plugin.with_name('not-uficpy.js')
+            wrong.write_text('// wrong\n')
+            with self.assertRaises(ValueError):
+                module.generate(wrong, 'https://example.com/plugins')

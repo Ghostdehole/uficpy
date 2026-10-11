@@ -23,7 +23,7 @@ import (
 
 //go:embed web/*
 var webFiles embed.FS
-var appVersion = "2.2.0"
+var appVersion = "2.2.1"
 
 func authorized(r *http.Request, token string) bool {
 	v := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")

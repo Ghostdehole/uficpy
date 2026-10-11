@@ -1,8 +1,9 @@
+//<!-- [KANO_PLUGIN_START] uficpy_plugin.js -->
 //<script>
-// uficpy 2.2.0 — UFI-TOOLS management plugin. Runtime is deployed separately.
+// uficpy 2.2.1 — UFI-TOOLS plugin.
 (async () => {
     'use strict';
-    const version = '2.2.0', path = '/data/uficpy', boot = '/sdcard/ufi_tools_boot.sh';
+    const version = '2.2.1', path = '/data/uficpy', boot = '/sdcard/ufi_tools_boot.sh';
     const defaultRepository='Ghostdehole/uficpy';
     const marker = '# UFICPY_V2_AUTOSTART';
     const oldBootLine = '(cd /data/uficpy && sh service.sh start)';
@@ -209,7 +210,7 @@ mv ${staged} ${path}/config.json`);
         let manifest;
         try { manifest=parseObject(await shell(`${curlSetup}
 "$CURL" -fLsS --proto '=https' --proto-redir '=https' --connect-timeout 15 --max-time 45 ${q('https://github.com/'+repo+'/releases/latest/download/release.json')}`,60000,'获取 Release 清单'),'Release 清单'); }
-        catch(e){throw Error('无法获取发布包：确认仓库公开、首次 Release 已成功发布、设备可访问 GitHub。'+e.message);}
+        catch(e){throw Error('无法获取发布包：请检查发布源、Release 和设备网络。'+e.message);}
         const a=manifest.assets?.arm64;
         if(manifest.schema!==1||manifest.repository!==repo||!/^[A-Za-z0-9_.-]{1,120}$/.test(manifest.tag)||a?.name!=='uficpy-arm64.tar.gz'||!/^[a-f0-9]{64}$/.test(a.sha256)||!Number.isInteger(a.size)||a.size<1024||a.size>134217728)throw Error('发布清单格式不受支持');
         const url=`https://github.com/${repo}/releases/download/${manifest.tag}/${a.name}`;
@@ -315,3 +316,4 @@ ${path}/uficpy -dir ${path} -list-displays`,45000)));
     window.addEventListener('pagehide',()=>clearTimeout(initTimer),{once:true});
 })().catch(e => { console.error('uficpy:', e); if (typeof createToast === 'function') createToast('uficpy 插件加载失败，请查看控制台', 'red'); });
 //</script>
+//<!-- [KANO_PLUGIN_END] uficpy_plugin.js -->

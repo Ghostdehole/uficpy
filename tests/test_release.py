@@ -20,6 +20,7 @@ try:
     spec = importlib.util.spec_from_file_location('package_release', ROOT/'scripts/package_release.py')
     package = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(package)
+    from release_notes import release_notes
 finally:
     sys.path.pop(0)
 
@@ -56,6 +57,8 @@ class ReleaseTests(unittest.TestCase):
         (self.root/'scripts/__pycache__/cached.pyc').write_bytes(b'cache')
         for name in ['fixture-server', 'config.local.json', '.env', 'uficpy.log']:
             (self.root/name).write_text('private')
+        (self.root/'dist/uficpy_plugin.js').write_text('old')
+        (self.root/'dist/uficpy_plugin-v9.9.8.js').write_text('old')
         self.package()
         dist = self.root/'dist'
         manifest = json.loads((dist/'release.json').read_text())
@@ -65,7 +68,27 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(asset['sha256'], hashlib.sha256((dist/asset['name']).read_bytes()).hexdigest())
         index = json.loads((dist/'repo.json').read_text())
         self.assertEqual(index['download_url'], 'https://github.com/Ghostdehole/uficpy/releases/download/v-test')
-        self.assertEqual(index['res']['data']['content'][0]['size'], (dist/'uficpy_plugin.js').stat().st_size)
+        plugin = manifest['assets']['plugin']
+        self.assertEqual(plugin['name'], 'uficpy_plugin-v9.9.9.js')
+        data = (dist/plugin['name']).read_bytes()
+        self.assertEqual(data, (self.root/'uficpy_plugin.js').read_bytes())
+        self.assertEqual(plugin['size'], len(data))
+        self.assertEqual(plugin['sha256'], hashlib.sha256(data).hexdigest())
+        item = index['res']['data']['content'][0]
+        self.assertEqual(item['name'], plugin['name'])
+        self.assertEqual(item['size'], len(data))
+        self.assertEqual(item['hash_info']['md5'], hashlib.md5(data).hexdigest())
+        source_index = json.loads((self.root/'repo.json').read_text())
+        self.assertEqual(source_index['res']['data']['content'][0]['name'], 'uficpy_plugin.js')
+        self.assertFalse((dist/'uficpy_plugin.js').exists())
+        self.assertFalse((dist/'uficpy_plugin-v9.9.8.js').exists())
+        checks = {}
+        for line in (dist/'SHA256SUMS').read_text().splitlines():
+            digest, name = line.split('  ')
+            self.assertEqual(digest, hashlib.sha256((dist/name).read_bytes()).hexdigest())
+            checks[name] = digest
+        self.assertIn(plugin['name'], checks)
+        self.assertNotIn('uficpy_plugin.js', checks)
         with zipfile.ZipFile(dist/'uficpy-source.zip') as archive:
             names = archive.namelist()
             self.assertIn('uficpy/.github/workflows/release.yml', names)
@@ -76,6 +99,7 @@ class ReleaseTests(unittest.TestCase):
                 self.assertTrue(entry.isfile())
                 self.assertFalse(entry.name.startswith('/') or '..' in pathlib.PurePosixPath(entry.name).parts)
             self.assertEqual(archive.getmember('uficpy').mode, 0o700)
+            self.assertEqual(archive.extractfile('uficpy_plugin.js').read(), data)
 
     def test_private_token_is_never_published(self):
         (self.root/'config.json').write_text(json.dumps({'token': 'a'*64}))
@@ -105,3 +129,17 @@ class ReleaseTests(unittest.TestCase):
                    'TEST_RELEASE_JSON': json.dumps({'tag_name': tag, 'target_commitish': commit})}
             subprocess.run([sys.executable, str(ROOT/'scripts/release_needed.py')], cwd=self.root, env=env, check=True, capture_output=True)
             self.assertEqual(output.read_text().strip(), 'needed='+str(expected).lower())
+
+    def test_release_notes_use_only_current_changelog_entry(self):
+        notes = release_notes({'version': '2.2.1', 'scrcpy_version': '5.0.1'},
+                              '# Changes\n\n## 2.2.1\n\n- 修复发布命名。\n\n## 2.2.0\n\n- 旧内容。\n')
+        self.assertIn('修复发布命名', notes)
+        self.assertIn('scrcpy 5.0.1', notes)
+        self.assertNotIn('旧内容', notes)
+        with self.assertRaisesRegex(ValueError, 'Missing changelog'):
+            release_notes({'version': '3.0.0', 'scrcpy_version': '5.0.1'}, '## 2.2.1\n- old\n')
+
+    def test_invalid_version_does_not_produce_plugin_path(self):
+        (self.root/'VERSION').write_text('../unsafe')
+        with self.assertRaisesRegex(ValueError, 'application version'):
+            self.package()
