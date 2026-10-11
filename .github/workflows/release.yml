@@ -62,7 +62,8 @@ jobs:
           CORE_VERSION=$(cat version.txt)
           RELEASE_TAG="v${APP_VERSION}-scrcpy${CORE_VERSION}-build.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
           mkdir -p dist
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -buildvcs=false -trimpath -ldflags="-s -w -X main.appVersion=${APP_VERSION}" -o dist/uficpy .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -buildvcs=false -trimpath -ldflags="-s -w -X main.appVersion=${APP_VERSION}" -o dist/uficpy-arm64 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -buildvcs=false -trimpath -ldflags="-s -w -X main.appVersion=${APP_VERSION}" -o dist/uficpy-armv7 .
           python3 scripts/package_release.py --tag "$RELEASE_TAG" --repository "$GITHUB_REPOSITORY"
           echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
@@ -75,5 +76,5 @@ jobs:
           PLUGIN_ASSET: ${{ steps.package.outputs.plugin_asset }}
         run: |
           python3 scripts/release_notes.py > dist/release-notes.md
-          gh release create "$RELEASE_TAG" dist/uficpy-arm64.tar.gz dist/uficpy-source.zip dist/uficpy-mirror.zip "dist/$PLUGIN_ASSET" dist/repo.json dist/release.json dist/core-lock.json dist/SHA256SUMS --draft --target "$GITHUB_SHA" --title "uficpy $APP_VERSION" --notes-file dist/release-notes.md
+          gh release create "$RELEASE_TAG" dist/uficpy-arm64.tar.gz dist/uficpy-armv7.tar.gz dist/uficpy-source.zip dist/uficpy-mirror.zip "dist/$PLUGIN_ASSET" dist/repo.json dist/release.json dist/core-lock.json dist/SHA256SUMS --draft --target "$GITHUB_SHA" --title "uficpy $APP_VERSION" --notes-file dist/release-notes.md
           gh release edit "$RELEASE_TAG" --draft=false --latest

@@ -19,7 +19,6 @@ BACKUP=/data/uficpy-backup-$(date +%Y%m%d-%H%M%S)-$$
 [ ! -e "$BACKUP" ] || { echo '备份路径已存在，请重试'; exit 1; }
 case "$SOURCE/" in "$TARGET/"*) echo '请在 /data/local/tmp 等独立临时目录解压安装包后执行'; exit 1;; esac
 [ ! -L "$TARGET" ] || { echo '安装目录不可为符号链接'; exit 1; }
-case "$(uname -m)" in aarch64|arm64) :;; *) echo '此安装包仅适用于 ARM64'; exit 1;; esac
 for item in uficpy scrcpy-server.jar core-lock.json version.txt VERSION service.sh uninstall.sh config.json; do
     [ -f "$SOURCE/$item" ] || { echo "缺少 $item"; exit 1; }
 done
@@ -61,6 +60,22 @@ if [ "$FRESH" -eq 0 ] && [ -f "$TARGET/config.json" ]; then cp "$TARGET/config.j
 # Certificates are user data, including when configuration and token are reset.
 [ ! -d "$TARGET/certs" ] || cp -R "$TARGET/certs" "$STAGE/"
 chmod 700 "$STAGE/uficpy" "$STAGE/service.sh"
+# uname may describe a 32-bit Android userspace on an ARM64 device. Execute the
+# verified package before touching the active installation; this also catches
+# unsupported instructions, missing loaders, and execution restrictions.
+if timeout 5s "$STAGE/uficpy" -version; then
+    :
+else
+    probe_status=$?
+    machine=$(uname -m 2>/dev/null || true)
+    abis=''
+    if command -v getprop >/dev/null 2>&1; then
+        abis=$(getprop ro.product.cpu.abilist 2>/dev/null || true)
+        [ -n "$abis" ] || abis=$(getprop ro.product.cpu.abi 2>/dev/null || true)
+    fi
+    echo "后端运行检查失败（退出码 $probe_status，uname: ${machine:-未知}，Android ABI: ${abis:-未知}）。请检查下载包架构、系统兼容性与执行权限；旧版未修改。" >&2
+    exit 1
+fi
 "$STAGE/uficpy" -dir "$STAGE" -init
 "$STAGE/uficpy" -dir "$STAGE" -check
 owned() {

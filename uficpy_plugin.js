@@ -1,9 +1,9 @@
 //<!-- [KANO_PLUGIN_START] uficpy_plugin.js -->
 //<script>
-// uficpy 2.2.2 — UFI-TOOLS plugin.
+// uficpy 2.2.3 — UFI-TOOLS plugin.
 (async () => {
     'use strict';
-    const version = '2.2.2', path = '/data/uficpy', boot = '/sdcard/ufi_tools_boot.sh';
+    const version = '2.2.3', path = '/data/uficpy', boot = '/sdcard/ufi_tools_boot.sh';
     const defaultRepository='Ghostdehole/uficpy';
     const marker = '# UFICPY_V2_AUTOSTART';
     const oldBootLine = '(cd /data/uficpy && sh service.sh start)';
@@ -245,9 +245,44 @@ mv ${staged} ${path}/config.json`);
         };
         showModal(dialog.id);
     }
+    function parseDeviceFacts(text){
+        if(typeof text!=='string'||text.length>2048)throw Error('设备架构检测返回内容异常，请检查 UFI-TOOLS 命令接口');
+        const fields={UNAME:'uname',ABILIST64:'abilist64',ABILIST:'abilist',ABI:'abi'},facts={};
+        for(const line of text.replace(/\r/g,'').trim().split('\n')){
+            const match=/^UFICPY_DEVICE_(UNAME|ABILIST64|ABILIST|ABI)=(.*)$/.exec(line);
+            if(!match||match[2].length>256||Object.prototype.hasOwnProperty.call(facts,fields[match[1]]))throw Error('设备架构检测返回内容不完整或格式错误，请检查 UFI-TOOLS 命令接口');
+            facts[fields[match[1]]]=match[2].trim();
+        }
+        if(Object.keys(facts).length!==4)throw Error('设备架构检测缺少 uname 或 Android ABI 信息，请重试“设备架构”');
+        return facts;
+    }
+    function deviceFactsText(facts){
+        return `uname -m: ${facts.uname||'(空)'}\nro.product.cpu.abilist64: ${facts.abilist64||'(空)'}\nro.product.cpu.abilist: ${facts.abilist||'(空)'}\nro.product.cpu.abi: ${facts.abi||'(空)'}`;
+    }
+    function selectDeviceArchitecture(facts){
+        const machine=facts.uname.toLowerCase();
+        const abis=[facts.abilist64,facts.abilist,facts.abi].flatMap(value=>value.toLowerCase().split(',').map(abi=>abi.trim()));
+        // Android's 32-bit shell may report armv8l on a 64-bit ARM kernel.
+        if(['aarch64','arm64','armv8l'].includes(machine))return 'arm64';
+        if(['armv7l','armv7'].includes(machine))return abis.includes('arm64-v8a')?'arm64':'armv7';
+        throw Error('无法为此设备选择后端：当前支持 ARM64 和小端 ARMv7，请提供以下检测结果。\n'+deviceFactsText(facts));
+    }
+    const architectureName=architecture=>architecture==='arm64'?'ARM64（64 位）':'ARMv7（32 位）';
+    async function probeDeviceFacts(){
+        return parseDeviceFacts(await shell(`printf 'UFICPY_DEVICE_UNAME=%s\\n' "$(uname -m 2>/dev/null || true)"
+if command -v getprop >/dev/null 2>&1; then
+    printf 'UFICPY_DEVICE_ABILIST64=%s\\n' "$(getprop ro.product.cpu.abilist64 2>/dev/null || true)"
+    printf 'UFICPY_DEVICE_ABILIST=%s\\n' "$(getprop ro.product.cpu.abilist 2>/dev/null || true)"
+    printf 'UFICPY_DEVICE_ABI=%s\\n' "$(getprop ro.product.cpu.abi 2>/dev/null || true)"
+else
+    printf 'UFICPY_DEVICE_ABILIST64=\\nUFICPY_DEVICE_ABILIST=\\nUFICPY_DEVICE_ABI=\\n'
+fi`,10000,'读取设备架构'));
+    }
     const curlSetup=`if command -v curl >/dev/null 2>&1; then CURL=curl; elif [ -x /data/data/com.minikano.f50_sms/files/curl ]; then CURL=/data/data/com.minikano.f50_sms/files/curl; else echo '设备缺少 curl，请安装支持 HTTPS 的 curl'; exit 1; fi`;
     async function installLatest(fresh=false){
         const {repo,sources}=sourceSettings();let manifest,selected;
+        const facts=await probeDeviceFacts(),architecture=selectDeviceArchitecture(facts);
+        createToast(`设备架构：${architectureName(architecture)}`,'',10000);
         for(let i=0;i<sources.length;i++){
             const source=sources[i];createToast(`正在从 ${source.name} 获取发布清单…`,'',10000);
             let payload;
@@ -261,15 +296,15 @@ mv ${staged} ${path}/config.json`);
             if(payload.length>65536)throw Error(`${source.name} 发布清单超过 64 KiB，已停止安装`);
             manifest=parseObject(payload,source.name+' 发布清单');selected=source;break;
         }
-        const a=manifest.assets?.arm64;
-        if(manifest.schema!==1||manifest.repository!==repo||typeof manifest.tag!=='string'||!/^[A-Za-z0-9_.-]{1,120}$/.test(manifest.tag)||['.','..'].includes(manifest.tag)||a?.name!=='uficpy-arm64.tar.gz'||typeof a.sha256!=='string'||!/^[a-f0-9]{64}$/.test(a.sha256)||!Number.isInteger(a.size)||a.size<1024||a.size>134217728)throw Error(`${selected.name} 发布清单不符合要求，请检查仓库、版本和文件摘要；已停止安装`);
-        createToast(`正在下载并校验 ${escape(manifest.version)} / scrcpy ${escape(manifest.scrcpy_version)}，完成后自动安装…`,'',20000);
+        if(manifest.schema!==1||manifest.repository!==repo||typeof manifest.tag!=='string'||!/^[A-Za-z0-9_.-]{1,120}$/.test(manifest.tag)||['.','..'].includes(manifest.tag))throw Error(`${selected.name} 发布清单不符合要求，请检查仓库、版本和文件摘要；已停止安装`);
+        const a=manifest.assets?.[architecture],assetName=`uficpy-${architecture}.tar.gz`;
+        if(!a)throw Error(`${selected.name} 当前发布缺少 ${architectureName(architecture)} 后端包（${assetName}）。请重新发布并同步包含该架构的新版资源；不会安装其他架构的后端。`);
+        if(a.name!==assetName||typeof a.sha256!=='string'||!/^[a-f0-9]{64}$/.test(a.sha256)||!Number.isInteger(a.size)||a.size<1024||a.size>134217728)throw Error(`${selected.name} ${architectureName(architecture)} 发布清单不符合要求，请检查文件名、大小和摘要；已停止安装`);
+        createToast(`正在下载并校验 ${escape(manifest.version)} / ${architectureName(architecture)} / scrcpy ${escape(manifest.scrcpy_version)}，完成后自动安装…`,'',20000);
         frame.src='about:blank';const temp='/data/local/tmp/uficpy-download-'+Date.now()+'-'+Math.random().toString(36).slice(2,10);
         let created=false,uncertain=false,result;
         try {
-            await shell(`${curlSetup}
-case "$(uname -m)" in aarch64|arm64) :;; *) echo '当前发布包仅支持 ARM64'; exit 1;; esac
-umask 077
+            await shell(`umask 077
 mkdir ${q(temp)}`,10000,'准备后端下载目录');
             created=true;
             const downloads=[selected,...sources.filter(source=>source!==selected)];
@@ -321,7 +356,7 @@ sh extracted/install.sh ${fresh?'--fresh':''}`,90000,'安装后端（若响应�
         const groups={
             uficpy_manage:['安装 / 更新','全新安装','重启','开机自启','卸载后端'],
             uficpy_settings:['发布源','高级 JSON','应用系统显示','播放地址','恢复显示'],
-            uficpy_diagnostics:['检查部署','编码器 / 显示屏','日志','错误详情']
+            uficpy_diagnostics:['检查部署','设备架构','编码器 / 显示屏','日志','错误详情']
         };
         const target=Object.keys(groups).find(key=>groups[key].includes(label))||'uficpy_actions';root.querySelector('#'+target).appendChild(b);
     }
@@ -334,6 +369,12 @@ sh extracted/install.sh ${fresh?'--fresh':''}`,90000,'安装后端（若响应�
 ${path}/uficpy -dir ${path} -init
 ${path}/uficpy -dir ${path} -check`);
         createToast('配置、访问令牌及配套 JAR 检查通过；可启动服务', 'green'); await state();
+    });
+    button('设备架构',async()=>{
+        const facts=await probeDeviceFacts();let selection;
+        try { selection='将选择：'+architectureName(selectDeviceArchitecture(facts)); }
+        catch { selection='无法选择后端：当前支持 ARM64 和小端 ARMv7。请提供以下检测结果。'; }
+        showText('设备架构',selection+'\n\n'+deviceFactsText(facts));
     });
     button('启动', async () => { await service('start'); await state(); if (expanded) await render(); });
     button('停止', async () => { frame.src = 'about:blank'; await service('stop'); await state(); });

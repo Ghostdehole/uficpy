@@ -40,10 +40,11 @@ class ReleaseTests(unittest.TestCase):
         (self.root/'licenses').mkdir()
         (self.root/'licenses/notice.txt').write_text('license')
         (self.root/'dist').mkdir()
-        binary = bytearray(20)
-        binary[:6] = b'\x7fELF\x02\x01'
-        binary[18:20] = (183).to_bytes(2, 'little')
-        (self.root/'dist/uficpy').write_bytes(binary)
+        for architecture, (elf_class, machine) in {'arm64': (2, 183), 'armv7': (1, 40)}.items():
+            binary = bytearray(20)
+            binary[:6] = b'\x7fELF'+bytes([elf_class, 1])
+            binary[18:20] = machine.to_bytes(2, 'little')
+            (self.root/f'dist/uficpy-{architecture}').write_bytes(binary)
 
     def package(self, tag='v-test'):
         with patch.object(package, 'ROOT', self.root), patch.object(sys, 'argv', ['package_release.py', '--tag', tag]), contextlib.redirect_stdout(io.StringIO()):
@@ -63,9 +64,11 @@ class ReleaseTests(unittest.TestCase):
         dist = self.root/'dist'
         manifest = json.loads((dist/'release.json').read_text())
         self.assertEqual(manifest['tag'], 'v-test')
-        asset = manifest['assets']['arm64']
-        self.assertEqual(asset['size'], (dist/asset['name']).stat().st_size)
-        self.assertEqual(asset['sha256'], hashlib.sha256((dist/asset['name']).read_bytes()).hexdigest())
+        for architecture in ['arm64', 'armv7']:
+            asset = manifest['assets'][architecture]
+            self.assertEqual(asset['name'], f'uficpy-{architecture}.tar.gz')
+            self.assertEqual(asset['size'], (dist/asset['name']).stat().st_size)
+            self.assertEqual(asset['sha256'], hashlib.sha256((dist/asset['name']).read_bytes()).hexdigest())
         index = json.loads((dist/'repo.json').read_text())
         self.assertEqual(index['download_url'], 'https://github.com/Ghostdehole/uficpy/releases/download/v-test')
         plugin = manifest['assets']['plugin']
@@ -88,6 +91,8 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(digest, hashlib.sha256((dist/name).read_bytes()).hexdigest())
             checks[name] = digest
         self.assertIn(plugin['name'], checks)
+        self.assertIn('uficpy-arm64.tar.gz', checks)
+        self.assertIn('uficpy-armv7.tar.gz', checks)
         self.assertIn('uficpy-mirror.zip', checks)
         self.assertNotIn('uficpy_plugin.js', checks)
         with zipfile.ZipFile(dist/'uficpy-source.zip') as archive:
@@ -95,12 +100,15 @@ class ReleaseTests(unittest.TestCase):
             self.assertIn('uficpy/.github/workflows/release.yml', names)
             self.assertIn('uficpy/core-lock.json', names)
             self.assertFalse(any(any(item in name for item in ['local-downloads', '__pycache__', '/dist/', 'fixture-server', 'config.local', '.env', '.log']) for name in names))
-        with tarfile.open(dist/asset['name']) as archive:
-            for entry in archive.getmembers():
-                self.assertTrue(entry.isfile())
-                self.assertFalse(entry.name.startswith('/') or '..' in pathlib.PurePosixPath(entry.name).parts)
-            self.assertEqual(archive.getmember('uficpy').mode, 0o700)
-            self.assertEqual(archive.extractfile('uficpy_plugin.js').read(), data)
+        for architecture in ['arm64', 'armv7']:
+            with self.subTest(architecture=architecture), tarfile.open(dist/manifest['assets'][architecture]['name']) as archive:
+                for entry in archive.getmembers():
+                    self.assertTrue(entry.isfile())
+                    self.assertFalse(entry.name.startswith('/') or '..' in pathlib.PurePosixPath(entry.name).parts)
+                self.assertEqual(archive.getmember('uficpy').mode, 0o700)
+                self.assertEqual(archive.extractfile('uficpy').read(), (dist/f'uficpy-{architecture}').read_bytes())
+                self.assertEqual(archive.extractfile('uficpy_plugin.js').read(), data)
+                self.assertEqual(archive.extractfile('scrcpy-server.jar').read(), (self.root/'scrcpy-server.jar').read_bytes())
 
     def test_mirror_contains_exact_manifest_and_pinned_backend(self):
         tag = 'v9.9.9-scrcpy5.0.1-build.12.2'
@@ -112,24 +120,54 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(manifest['schema'], 1)
         self.assertEqual(manifest['repository'], 'Ghostdehole/uficpy')
         self.assertEqual(manifest['tag'], tag)
-        self.assertEqual(set(manifest['assets']), {'arm64', 'plugin'})
+        self.assertEqual(set(manifest['assets']), {'arm64', 'armv7', 'plugin'})
         asset = manifest['assets']['arm64']
         self.assertEqual(asset['name'], 'uficpy-arm64.tar.gz')
-        backend_path = f"releases/{tag}/{asset['name']}"
+        backend_paths = [f"releases/{tag}/{manifest['assets'][arch]['name']}" for arch in ['arm64', 'armv7']]
         with zipfile.ZipFile(dist/'uficpy-mirror.zip') as archive:
-            self.assertEqual(archive.namelist(), [backend_path, 'release.json'])
+            self.assertEqual(archive.namelist(), [*backend_paths, 'release.json'])
             self.assertEqual(archive.read('release.json'), manifest_data)
-            data = archive.read(backend_path)
-        self.assertEqual(data, (dist/asset['name']).read_bytes())
-        self.assertEqual(len(data), asset['size'])
-        self.assertEqual(hashlib.sha256(data).hexdigest(), asset['sha256'])
+            for architecture, backend_path in zip(['arm64', 'armv7'], backend_paths):
+                asset = manifest['assets'][architecture]
+                data = archive.read(backend_path)
+                self.assertEqual(data, (dist/asset['name']).read_bytes())
+                self.assertEqual(len(data), asset['size'])
+                self.assertEqual(hashlib.sha256(data).hexdigest(), asset['sha256'])
         sums = dict(line.split('  ', 1)[::-1] for line in (dist/'SHA256SUMS').read_text().splitlines())
         self.assertEqual(sums['uficpy-mirror.zip'], hashlib.sha256((dist/'uficpy-mirror.zip').read_bytes()).hexdigest())
         # Republishing a different tag replaces this release's bundle rather
         # than carrying stale backends into every subsequent mirror download.
         self.package('v-next')
         with zipfile.ZipFile(dist/'uficpy-mirror.zip') as archive:
-            self.assertEqual(archive.namelist(), ['releases/v-next/uficpy-arm64.tar.gz', 'release.json'])
+            self.assertEqual(archive.namelist(), ['releases/v-next/uficpy-arm64.tar.gz', 'releases/v-next/uficpy-armv7.tar.gz', 'release.json'])
+
+    def test_missing_binary_stops_before_any_asset_is_written(self):
+        for architecture in ['arm64', 'armv7']:
+            binary = self.root/f'dist/uficpy-{architecture}'
+            original = binary.read_bytes()
+            binary.unlink()
+            with self.subTest(architecture=architecture), self.assertRaisesRegex(ValueError, f'Missing {architecture}'):
+                self.package()
+            self.assertEqual(sorted(path.name for path in (self.root/'dist').iterdir()),
+                             [f'uficpy-{other}' for other in ['arm64', 'armv7'] if other != architecture])
+            binary.write_bytes(original)
+
+    def test_wrong_architecture_or_corrupt_binary_stops_packaging(self):
+        for architecture, wrong_architecture in [('arm64', 'armv7'), ('armv7', 'arm64')]:
+            binary = self.root/f'dist/uficpy-{architecture}'
+            original = binary.read_bytes()
+            wrong = (self.root/f'dist/uficpy-{wrong_architecture}').read_bytes()
+            big_endian = bytearray(original)
+            big_endian[5] = 2
+            cases = [wrong, b'not an executable', original[:19], bytes(big_endian)]
+            for data in cases:
+                binary.write_bytes(data)
+                with self.subTest(architecture=architecture, data=data), self.assertRaisesRegex(ValueError, f'Expected Linux {architecture}'):
+                    self.package()
+                self.assertFalse((self.root/'dist/release.json').exists())
+                self.assertFalse(list((self.root/'dist').glob('*.tar.gz')))
+                self.assertFalse(list((self.root/'dist').glob('*.zip')))
+            binary.write_bytes(original)
 
     def test_dot_tags_cannot_escape_version_directory(self):
         for tag in ['.', '..', '../v1']:

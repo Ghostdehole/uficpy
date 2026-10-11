@@ -1,4 +1,4 @@
-const fs=require('fs'),path=require('path'),assert=require('assert/strict');
+const fs=require('fs'),path=require('path'),os=require('os'),cp=require('child_process'),assert=require('assert/strict');
 
 // Exercise the public settings and install buttons. No fixture invokes Root or
 // contacts a release host: UFI's command bridge returns explicit shell outcomes.
@@ -6,15 +6,16 @@ module.exports=async function downloadTests(browser,origin,errors,root){
  const source=fs.readFileSync(path.join(root,'uficpy_plugin.js'),'utf8');
  const version=fs.readFileSync(path.join(root,'VERSION'),'utf8').trim();
  const repository='Ghostdehole/uficpy',base='https://download.doevt.top/uficpy';
- const manifest={schema:1,version,scrcpy_version:'5.0.1',repository,tag:'v'+version+'-test',assets:{arm64:{name:'uficpy-arm64.tar.gz',sha256:'b'.repeat(64),size:1000000}}};
+ const manifest={schema:1,version,scrcpy_version:'5.0.1',repository,tag:'v'+version+'-test',assets:{arm64:{name:'uficpy-arm64.tar.gz',sha256:'b'.repeat(64),size:1000000},armv7:{name:'uficpy-armv7.tar.gz',sha256:'c'.repeat(64),size:900000}}};
  const githubManifest=`https://github.com/${repository}/releases/latest/download/release.json`,mirrorManifest=base+'/release.json';
  const githubAsset=`https://github.com/${repository}/releases/download/${manifest.tag}/uficpy-arm64.tar.gz`,mirrorAsset=base+'/releases/'+manifest.tag+'/uficpy-arm64.tar.gz';
  const settings=(policy='github-first',mirror=base)=>({uficpy_repository:repository,uficpy_mirror_base:mirror,uficpy_download_policy:policy});
+ const deviceFacts=(uname='aarch64',abilist64='arm64-v8a',abilist='arm64-v8a,armeabi-v7a',abi='arm64-v8a')=>`UFICPY_DEVICE_UNAME=${uname}\nUFICPY_DEVICE_ABILIST64=${abilist64}\nUFICPY_DEVICE_ABILIST=${abilist}\nUFICPY_DEVICE_ABI=${abi}`;
 
  async function initialize(p,initial){
-  await p.evaluate(({initial,manifest})=>{
+  await p.evaluate(({initial,manifest,device})=>{
    if(initial)for(const [key,value]of Object.entries(initial))localStorage.setItem(key,value);
-   window.UFI_DATA={loginfo:'ok'};window.testCommands=[];window.testToasts=[];window.testPlans={};window.testFailure=null;
+   window.UFI_DATA={loginfo:'ok'};window.testCommands=[];window.testToasts=[];window.testPlans={};window.testFailure=null;window.testDevice=device;
    window.runShellWithRoot=async(cmd,timeout)=>{
     const url=cmd.match(/https:\/\/[A-Za-z0-9./_%-]+/)?.[0];
     window.testCommands.push({cmd,timeout,url});
@@ -27,6 +28,7 @@ module.exports=async function downloadTests(browser,origin,errors,root){
     if(outcome==='digest-error')return {success:true,content:'package.tar.gz: FAILED\nsha256sum: WARNING: 1 computed checksum did NOT match\nUFICPY_COMMAND_FAILED\n'};
     let content='done';
     if(outcome&&Object.hasOwn(outcome,'raw'))content=outcome.raw;
+    else if(cmd.includes('UFICPY_DEVICE_UNAME'))content=window.testDevice;
     else if(url?.endsWith('/release.json'))content=JSON.stringify(outcome?.manifest||manifest);
     else if(cmd.includes('service.sh status'))content='missing';
     return {success:true,content:content+'\nUFICPY_OK\n'};
@@ -40,7 +42,7 @@ module.exports=async function downloadTests(browser,origin,errors,root){
    window.showModal=id=>document.querySelector(id).style.display='block';
    window.closeModal=id=>document.querySelector(id).style.display='none';
    window.collapseGen=(a,b)=>{const el=document.querySelector(b);el.dataset.name='open';el.style.height='auto';};
-  },{initial,manifest});
+  },{initial,manifest,device:deviceFacts()});
   await p.addScriptTag({content:source});
   await p.waitForFunction(()=>document.querySelector('#uficpy_status')?.textContent.includes('未安装')&&!document.querySelector('#uficpy_actions button').disabled);
   await p.locator('#uficpy_advanced').evaluate(el=>el.parentElement.open=true);
@@ -53,6 +55,7 @@ module.exports=async function downloadTests(browser,origin,errors,root){
  }
  const click=async(p,name)=>{await p.getByRole('button',{name,exact:true}).click();await p.waitForFunction(()=>!document.querySelector('#uficpy_actions button').disabled);};
  const plans=async(p,value)=>p.evaluate(value=>{window.testPlans=value;},value);
+ const profile=async(p,value)=>p.evaluate(value=>{window.testDevice=value;},value);
  const commands=async p=>p.evaluate(()=>testCommands);
  const requests=async p=>{
   const outgoing=(await commands(p)).filter(c=>c.url);
@@ -93,6 +96,68 @@ module.exports=async function downloadTests(browser,origin,errors,root){
  await prefs.close();
  console.log('PASS: download source preferences persist; HTTPS normalization, credentials/query/fragment/control rejection and empty-mirror policies');
 
+ // Architecture comes from the device bridge, never the browser or hostname.
+ for(const [facts,arch] of [
+  [deviceFacts(),'arm64'],
+  [deviceFacts('arm64','','',''),'arm64'],
+  [deviceFacts('armv8l','','armeabi-v7a,armeabi','armeabi-v7a'),'arm64'],
+  [deviceFacts('armv7l','','armeabi-v7a,armeabi','armeabi-v7a'),'armv7'],
+  [deviceFacts('armv7','','','armeabi-v7a'),'armv7'],
+  [deviceFacts('armv7l','arm64-v8a','armeabi-v7a','armeabi-v7a'),'arm64'],
+  [deviceFacts('armv7l','','armeabi-v7a,arm64-v8a','armeabi-v7a'),'arm64'],
+  [deviceFacts('armv7l','','','arm64-v8a'),'arm64'],
+  [deviceFacts('armv7l','','not-arm64-v8a','armeabi-v7a'),'armv7'],
+  [deviceFacts('  armv8l  ','','','').replaceAll('\n','\r\n'),'arm64'],
+  [deviceFacts(' ARMV7L ','',' armeabi-v7a,armeabi ',' armeabi-v7a ').replaceAll('\n','\r\n'),'armv7']
+ ]){
+  const p=await page(settings('mirror-only'));await profile(p,facts);await click(p,'安装 / 更新');
+  const asset=manifest.assets[arch];
+  assert.deepEqual(await requests(p),[mirrorManifest,`${base}/releases/${manifest.tag}/${asset.name}`],facts);
+  const all=await commands(p),check=all.find(c=>c.cmd.includes('sha256sum -c checksum'));
+  assert.ok(check?.cmd.includes(asset.sha256),'selected architecture must use its own digest');
+  assert.ok(check?.cmd.includes(String(asset.size)),'selected architecture must use its own size');
+  assert.equal((await installs(p)).length,1);assert.ok(all[0].cmd.includes('UFICPY_DEVICE_UNAME'),'probe must run before network requests');
+  await p.close();
+ }
+ for(const facts of [deviceFacts('x86_64','','x86_64','x86_64'),deviceFacts('i686','','x86','x86'),deviceFacts('mips','arm64-v8a','arm64-v8a','arm64-v8a'),deviceFacts('','','',''),'','UFICPY_DEVICE_UNAME=armv7l']){
+  const p=await page(settings());await profile(p,facts);await click(p,'安装 / 更新');
+  await expectStopped(p,[]);
+  assert.ok(!(await commands(p)).some(c=>c.cmd.includes('mkdir ')||c.cmd.includes('sh extracted/install.sh')),'unsupported or incomplete profile cannot prepare an install');
+  await p.close();
+ }
+ const diagnostic=await page();await profile(diagnostic,deviceFacts('armv7l','','armeabi-v7a,armeabi','armeabi-v7a'));await click(diagnostic,'设备架构');
+ assert.match(await diagnostic.locator('#uficpy_detail').innerText(),/armv7l/);
+ assert.match(await diagnostic.locator('#uficpy_detail').innerText(),/armeabi-v7a/);
+ const diagnosticCommands=await commands(diagnostic);assert.equal(diagnosticCommands.length,1);assert.ok(diagnosticCommands[0].cmd.includes('UFICPY_DEVICE_UNAME'));
+ assert.ok(!/\b(?:mkdir|rm|curl|install\.sh|service\.sh)\b/.test(diagnosticCommands[0].cmd),'architecture diagnosis is available without installing or altering a backend');
+ // Execute the generated read-only shell against fake Android tools as well.
+ const deviceBin=fs.mkdtempSync(path.join(os.tmpdir(),'uficpy-device-'));
+ try{
+  fs.symlinkSync('/bin/sh',path.join(deviceBin,'sh'));
+  fs.writeFileSync(path.join(deviceBin,'uname'),'#!/bin/sh\n[ "$1" = -m ] || exit 1\nprintf "%s\\n" armv7l\n',{mode:0o700});
+  fs.writeFileSync(path.join(deviceBin,'getprop'),'#!/bin/sh\ncase "$1" in\nro.product.cpu.abilist64) printf "\\n";;\nro.product.cpu.abilist) printf "armeabi-v7a,armeabi\\n";;\nro.product.cpu.abi) printf "armeabi-v7a\\n";;\n*) exit 1;;\nesac\n',{mode:0o700});
+  const command=diagnosticCommands[0].cmd.replace('[ "$(id -u)" = 0 ]','true');
+  const run=()=>cp.spawnSync('/bin/sh',['-c',command],{encoding:'utf8',env:{...process.env,PATH:deviceBin}});
+  const android=run();assert.equal(android.status,0,android.stderr);assert.match(android.stdout,/UFICPY_OK/);
+  assert.equal(android.stdout.replace(/\s*UFICPY_OK\s*$/,'').trim(),deviceFacts('armv7l','','armeabi-v7a,armeabi','armeabi-v7a'));
+  fs.unlinkSync(path.join(deviceBin,'getprop'));
+  const unavailable=run();assert.equal(unavailable.status,0,unavailable.stderr);assert.match(unavailable.stdout,/UFICPY_OK/);
+  assert.equal(unavailable.stdout.replace(/\s*UFICPY_OK\s*$/,'').trim(),deviceFacts('armv7l','','',''));
+ }finally{fs.rmSync(deviceBin,{recursive:true,force:true});}
+ await diagnostic.close();
+ const unsupportedDiagnostic=await page();await profile(unsupportedDiagnostic,deviceFacts('x86_64','','x86_64','x86_64'));await click(unsupportedDiagnostic,'设备架构');
+ assert.match(await unsupportedDiagnostic.locator('#uficpy_detail').innerText(),/x86_64/);assert.equal((await commands(unsupportedDiagnostic)).length,1);await unsupportedDiagnostic.close();
+ const oldRelease=await page(settings());await profile(oldRelease,deviceFacts('armv7l','','armeabi-v7a','armeabi-v7a'));
+ await plans(oldRelease,{[githubManifest]:{manifest:{...manifest,assets:{arm64:manifest.assets.arm64}}}});await click(oldRelease,'安装 / 更新');
+ await expectStopped(oldRelease,[githubManifest]);assert.match(await oldRelease.locator('#uficpy_error').innerText(),/ARMv7|armv7/);await oldRelease.close();
+ const wrongArch=await page(settings());await profile(wrongArch,deviceFacts('armv7l','','armeabi-v7a','armeabi-v7a'));
+ await plans(wrongArch,{[githubManifest]:{manifest:{...manifest,assets:{...manifest.assets,armv7:manifest.assets.arm64}}}});await click(wrongArch,'安装 / 更新');
+ await expectStopped(wrongArch,[githubManifest]);await wrongArch.close();
+ const pinnedV7=await page(settings()),githubV7=githubAsset.replace('uficpy-arm64','uficpy-armv7'),mirrorV7=mirrorAsset.replace('uficpy-arm64','uficpy-armv7');
+ await profile(pinnedV7,deviceFacts('armv7l','','armeabi-v7a','armeabi-v7a'));await plans(pinnedV7,{[githubV7]:'download-error'});await click(pinnedV7,'安装 / 更新');
+ assert.deepEqual(await requests(pinnedV7),[githubManifest,githubV7,mirrorV7],'fallback must preserve both release tag and architecture');assert.equal((await installs(pinnedV7)).length,1);await pinnedV7.close();
+ console.log('PASS: ARMv7, ARMv8 compat and AArch64 selection, CRLF normalization, read-only diagnostics, unsupported/missing architecture rejection and pinned architecture failover');
+
  const legacy=await page();await click(legacy,'安装 / 更新');
  assert.deepEqual(await requests(legacy),[githubManifest,githubAsset]);assert.equal((await installs(legacy)).length,1);await legacy.close();
  for(const policy of ['mirror-first','mirror-only']){
@@ -119,15 +184,15 @@ module.exports=async function downloadTests(browser,origin,errors,root){
   const p=await page(settings());await plans(p,{[githubManifest]:response});await click(p,'安装 / 更新');
   await expectStopped(p,[githubManifest]);await p.close();
  }
- for(const stage of ['manifest','prepare','download','verify','install']){
+ for(const stage of ['profile','manifest','prepare','download','verify','install']){
   const p=await page(settings());
   if(stage==='manifest')await plans(p,{[githubManifest]:'bridge-error'});
   else if(stage==='download')await plans(p,{[githubAsset]:'bridge-error'});
-  else await failure(p,stage==='prepare'?'uname -m':stage==='verify'?'sha256sum -c checksum':'sh extracted/install.sh','bridge-error');
+  else await failure(p,stage==='profile'?'UFICPY_DEVICE_UNAME':stage==='prepare'?'umask 077':stage==='verify'?'sha256sum -c checksum':'sh extracted/install.sh','bridge-error');
   await click(p,'安装 / 更新');
-  assert.deepEqual(await requests(p),['manifest','prepare'].includes(stage)?[githubManifest]:[githubManifest,githubAsset]);
+  assert.deepEqual(await requests(p),stage==='profile'?[]:['manifest','prepare'].includes(stage)?[githubManifest]:[githubManifest,githubAsset]);
   assert.equal((await installs(p)).length,stage==='install'?1:0,'uncertain bridge response never replays an installation');
-  const all=await commands(p),uncertainIndex=all.findIndex(c=>stage==='manifest'?c.url===githubManifest:stage==='download'?c.url===githubAsset:c.cmd.includes(stage==='prepare'?'uname -m':stage==='verify'?'sha256sum -c checksum':'sh extracted/install.sh'));
+  const all=await commands(p),uncertainIndex=all.findIndex(c=>stage==='manifest'?c.url===githubManifest:stage==='download'?c.url===githubAsset:c.cmd.includes(stage==='profile'?'UFICPY_DEVICE_UNAME':stage==='prepare'?'umask 077':stage==='verify'?'sha256sum -c checksum':'sh extracted/install.sh'));
   assert.equal(all.length,uncertainIndex+1,'uncertain operation must not race cleanup or further Root commands');
   await p.close();
  }
@@ -135,7 +200,7 @@ module.exports=async function downloadTests(browser,origin,errors,root){
   const p=await page(settings());await failure(p,'sha256sum -c checksum',outcome);await click(p,'安装 / 更新');
   await expectStopped(p,[githubManifest,githubAsset]);await p.close();
  }
- const setup=await page(settings());await failure(setup,'uname -m','command-error');await click(setup,'安装 / 更新');
+ const setup=await page(settings());await failure(setup,'umask 077','command-error');await click(setup,'安装 / 更新');
  await expectStopped(setup,[githubManifest]);await setup.close();
  const badStored=await page(settings('mirror-only',base+'\n/injected'));await click(badStored,'安装 / 更新');
  await expectStopped(badStored,[]);await badStored.close();

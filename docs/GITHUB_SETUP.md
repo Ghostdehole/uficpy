@@ -17,10 +17,11 @@
 | 附件 | 内容 |
 | --- | --- |
 | `uficpy-arm64.tar.gz` | Android ARM64 运行包 |
-| `uficpy_plugin-v<版本>.js` | UFI-TOOLS 插件，例如 `uficpy_plugin-v2.2.2.js` |
-| `uficpy-mirror.zip` | 后端镜像目录，供静态下载站同步 |
+| `uficpy-armv7.tar.gz` | Android ARMv7 运行包（32 位，GOARM=7） |
+| `uficpy_plugin-v<版本>.js` | UFI-TOOLS 插件，例如 `uficpy_plugin-v2.2.3.js` |
+| `uficpy-mirror.zip` | 两种架构的后端镜像目录，供静态下载站同步 |
 | `uficpy-source.zip` | 本次构建的源码和核心文件 |
-| `release.json` | 固定标签、运行包与插件的大小及 SHA-256 |
+| `release.json` | 固定标签、两种架构运行包与插件的大小及 SHA-256 |
 | `repo.json` | 指向本次插件附件的商店源 |
 | `core-lock.json` | scrcpy 版本及官方资产摘要 |
 | `SHA256SUMS` | 附件校验表 |

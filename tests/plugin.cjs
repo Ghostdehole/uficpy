@@ -58,7 +58,8 @@ module.exports=async function pluginTests(browser,origin,errors,root){
     window.testCommands.push({cmd,timeout});
     if(window.testFailure&&(!window.testFailure.on||cmd.includes(window.testFailure.on))){const f=window.testFailure;if(f.throws)throw new SyntaxError(f.message);return {success:false,content:f.message};}
     let content='running';
-    if(cmd.includes("config.json")&&cmd.includes("timeout 2s awk"))content=window.testConfig;
+    if(cmd.includes('UFICPY_DEVICE_UNAME'))content='UFICPY_DEVICE_UNAME=aarch64\nUFICPY_DEVICE_ABILIST64=arm64-v8a\nUFICPY_DEVICE_ABILIST=arm64-v8a,armeabi-v7a\nUFICPY_DEVICE_ABI=arm64-v8a';
+    else if(cmd.includes("config.json")&&cmd.includes("timeout 2s awk"))content=window.testConfig;
     else if(cmd.includes('grep -qxF'))content=window.testBootEnabled?'yes':'no';
     else if(cmd.includes('releases/latest/download/release.json'))content=JSON.stringify({schema:1,version,scrcpy_version:'5.0.1',tag:'v'+version+'-test',repository:'Ghostdehole/uficpy',assets:{arm64:{name:'uficpy-arm64.tar.gz',sha256:'b'.repeat(64),size:1000000}}});
     return {success:true,content:content+'\nUFICPY_OK\n'};

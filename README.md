@@ -1,6 +1,6 @@
 # uficpy
 
-基于 scrcpy 的 Android 网页投屏，配套 UFI-TOOLS 管理插件。后端运行在 **Android ARM64 + Root** 设备上，浏览器负责播放和控制，不需要在设备上安装 Node.js、FFmpeg 或开启网络 ADB。
+基于 scrcpy 的 Android 网页投屏，配套 UFI-TOOLS 管理插件。后端运行在 **Android ARM64 / ARMv7 + Root** 设备上，浏览器负责播放和控制，不需要在设备上安装 Node.js、FFmpeg 或开启网络 ADB。
 
 ## 功能
 
@@ -28,7 +28,7 @@ npx playwright install --with-deps chrome
 sh scripts/test.sh
 ```
 
-`sh build.sh` 会运行测试并生成 ARM64 发布包，输出到 `dist/`。更新 scrcpy 核心使用 `python3 scripts/sync_core.py --version latest`，版本和摘要记录在 `core-lock.json`；协议检查不通过时需要先完成适配。
+`sh build.sh` 会运行测试并生成 ARM64 和 ARMv7 发布包，输出到 `dist/`。更新 scrcpy 核心使用 `python3 scripts/sync_core.py --version latest`，版本和摘要记录在 `core-lock.json`；协议检查不通过时需要先完成适配。
 
 ## 文档
 
