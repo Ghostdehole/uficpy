@@ -75,5 +75,5 @@ jobs:
           PLUGIN_ASSET: ${{ steps.package.outputs.plugin_asset }}
         run: |
           python3 scripts/release_notes.py > dist/release-notes.md
-          gh release create "$RELEASE_TAG" dist/uficpy-arm64.tar.gz dist/uficpy-source.zip "dist/$PLUGIN_ASSET" dist/repo.json dist/release.json dist/core-lock.json dist/SHA256SUMS --draft --target "$GITHUB_SHA" --title "uficpy $APP_VERSION" --notes-file dist/release-notes.md
+          gh release create "$RELEASE_TAG" dist/uficpy-arm64.tar.gz dist/uficpy-source.zip dist/uficpy-mirror.zip "dist/$PLUGIN_ASSET" dist/repo.json dist/release.json dist/core-lock.json dist/SHA256SUMS --draft --target "$GITHUB_SHA" --title "uficpy $APP_VERSION" --notes-file dist/release-notes.md
           gh release edit "$RELEASE_TAG" --draft=false --latest

@@ -17,7 +17,8 @@
 | 附件 | 内容 |
 | --- | --- |
 | `uficpy-arm64.tar.gz` | Android ARM64 运行包 |
-| `uficpy_plugin-v<版本>.js` | UFI-TOOLS 插件，例如 `uficpy_plugin-v2.2.1.js` |
+| `uficpy_plugin-v<版本>.js` | UFI-TOOLS 插件，例如 `uficpy_plugin-v2.2.2.js` |
+| `uficpy-mirror.zip` | 后端镜像目录，供静态下载站同步 |
 | `uficpy-source.zip` | 本次构建的源码和核心文件 |
 | `release.json` | 固定标签、运行包与插件的大小及 SHA-256 |
 | `repo.json` | 指向本次插件附件的商店源 |
@@ -32,4 +33,4 @@
 
 `sh build.sh` 运行测试、编译后端并生成发布文件。测试环境和命令见 [测试说明](VALIDATION.md)。本地打包默认使用 `-local` 标签。
 
-Fork 的发布清单使用 `GITHUB_REPOSITORY`。插件默认发布源为 `Ghostdehole/uficpy`，可在“管理与诊断 → 高级设置 → 发布源”中修改。
+Fork 的发布清单使用 `GITHUB_REPOSITORY`。插件默认发布源为 `Ghostdehole/uficpy`，可在“管理与诊断 → 高级设置 → 发布源”中修改。备用下载源和同步目录见 [备用下载源](MIRROR.md)。

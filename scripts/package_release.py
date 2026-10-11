@@ -29,7 +29,7 @@ def source_zip(destination):
 
 def main():
     p=argparse.ArgumentParser();p.add_argument('--tag',required=True);p.add_argument('--repository',default='Ghostdehole/uficpy');a=p.parse_args()
-    if not re.fullmatch(r'[A-Za-z0-9_.-]{1,120}',a.tag) or not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+',a.repository):
+    if a.tag in {'.', '..'} or not re.fullmatch(r'[A-Za-z0-9_.-]{1,120}',a.tag) or not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+',a.repository):
         raise ValueError('Invalid tag/repository')
     version=(ROOT/'VERSION').read_text().strip()
     if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?',version):
@@ -72,7 +72,12 @@ def main():
                   'plugin':{'name':plugin_name,'sha256':hashlib.sha256((dist/plugin_name).read_bytes()).hexdigest(),'size':(dist/plugin_name).stat().st_size}}}
     (dist/'release.json').write_text(json.dumps(manifest,indent=2)+'\n')
     source_zip(dist/'uficpy-source.zip')
-    checks=['uficpy-arm64.tar.gz',plugin_name,'repo.json','core-lock.json','release.json','uficpy-source.zip']
+    # Keep the backend at its immutable release path. Only release.json is
+    # replaced when the static mirror advances to a newer release.
+    with zipfile.ZipFile(dist/'uficpy-mirror.zip','w',zipfile.ZIP_STORED) as archive:
+        archive.write(dist/name,f'releases/{a.tag}/{name}')
+        archive.write(dist/'release.json','release.json')
+    checks=['uficpy-arm64.tar.gz',plugin_name,'repo.json','core-lock.json','release.json','uficpy-source.zip','uficpy-mirror.zip']
     (dist/'SHA256SUMS').write_text(''.join(hashlib.sha256((dist/f).read_bytes()).hexdigest()+'  '+f+'\n' for f in checks))
     print(json.dumps(manifest,indent=2))
 

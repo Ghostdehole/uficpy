@@ -8,7 +8,7 @@
 - 多指触控、鼠标滚轮、常用键盘按键和文字粘贴；失焦或断线时释放输入。
 - 可调分辨率、帧率、码率、编码器、裁剪、屏幕方向及播放缓存。
 - 多页面共用采集进程，无人观看时停止采集。
-- 插件管理后端更新、卸载、自启、配置和日志，支持完整 JSON 编辑与导入导出。
+- 插件管理后端更新、卸载、自启、配置和日志，支持备用下载源、完整 JSON 编辑与导入导出。
 
 音量加减和静音默认关闭。**部分 UFI 固件可能将音量键映射为恢复出厂设置，造成数据丢失。** 开关位于插件的“管理与诊断 → 高级 JSON → 危险功能”；播放器还需在“设置 → 高级控制 → 危险按键”中解锁当前会话。
 
@@ -35,6 +35,7 @@ sh scripts/test.sh
 - [配置](docs/CONFIGURATION.md)
 - [UFI-TOOLS 兼容性与排错](docs/UFI_COMPATIBILITY.md)
 - [构建与发布](docs/GITHUB_SETUP.md)
+- [备用下载源](docs/MIRROR.md)
 - [测试](docs/VALIDATION.md)
 - [安全](docs/SECURITY.md)
 - [第三方项目](THIRD_PARTY_NOTICES.md)

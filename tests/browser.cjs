@@ -46,6 +46,7 @@ const root=path.resolve(__dirname,'..'),tmp=fs.mkdtempSync(path.join(os.tmpdir()
   console.log('PASS: HTTP localhost MSE, WebCodecs, late join, pointer control');
   if(process.env.UFICPY_SCREENSHOT_DIR){fs.mkdirSync(process.env.UFICPY_SCREENSHOT_DIR,{recursive:true});await a.screenshot({path:path.join(process.env.UFICPY_SCREENSHOT_DIR,'player-desktop.png')});await a.setViewportSize({width:390,height:844});await a.screenshot({path:path.join(process.env.UFICPY_SCREENSHOT_DIR,'player-mobile.png')});}
   await require('./plugin.cjs')(browser,'http://127.0.0.1:19528',errors,root);
+  await require('./plugin-download.cjs')(browser,'http://127.0.0.1:19528',errors,root);
   await a.close();await b.close();
   await new Promise(r=>setTimeout(r,2700));
   const health=await fetch('http://127.0.0.1:19528/healthz',{headers:{Authorization:'Bearer '+token}}).then(r=>r.json());

@@ -45,8 +45,8 @@ class ReleaseTests(unittest.TestCase):
         binary[18:20] = (183).to_bytes(2, 'little')
         (self.root/'dist/uficpy').write_bytes(binary)
 
-    def package(self):
-        with patch.object(package, 'ROOT', self.root), patch.object(sys, 'argv', ['package_release.py', '--tag', 'v-test']), contextlib.redirect_stdout(io.StringIO()):
+    def package(self, tag='v-test'):
+        with patch.object(package, 'ROOT', self.root), patch.object(sys, 'argv', ['package_release.py', '--tag', tag]), contextlib.redirect_stdout(io.StringIO()):
             package.main()
 
     def test_release_contract_and_source_cleanup(self):
@@ -88,6 +88,7 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(digest, hashlib.sha256((dist/name).read_bytes()).hexdigest())
             checks[name] = digest
         self.assertIn(plugin['name'], checks)
+        self.assertIn('uficpy-mirror.zip', checks)
         self.assertNotIn('uficpy_plugin.js', checks)
         with zipfile.ZipFile(dist/'uficpy-source.zip') as archive:
             names = archive.namelist()
@@ -100,6 +101,41 @@ class ReleaseTests(unittest.TestCase):
                 self.assertFalse(entry.name.startswith('/') or '..' in pathlib.PurePosixPath(entry.name).parts)
             self.assertEqual(archive.getmember('uficpy').mode, 0o700)
             self.assertEqual(archive.extractfile('uficpy_plugin.js').read(), data)
+
+    def test_mirror_contains_exact_manifest_and_pinned_backend(self):
+        tag = 'v9.9.9-scrcpy5.0.1-build.12.2'
+        self.package(tag)
+        dist = self.root/'dist'
+        manifest_data = (dist/'release.json').read_bytes()
+        manifest = json.loads(manifest_data)
+        # Existing plugins keep using the same schema and GitHub asset name.
+        self.assertEqual(manifest['schema'], 1)
+        self.assertEqual(manifest['repository'], 'Ghostdehole/uficpy')
+        self.assertEqual(manifest['tag'], tag)
+        self.assertEqual(set(manifest['assets']), {'arm64', 'plugin'})
+        asset = manifest['assets']['arm64']
+        self.assertEqual(asset['name'], 'uficpy-arm64.tar.gz')
+        backend_path = f"releases/{tag}/{asset['name']}"
+        with zipfile.ZipFile(dist/'uficpy-mirror.zip') as archive:
+            self.assertEqual(archive.namelist(), [backend_path, 'release.json'])
+            self.assertEqual(archive.read('release.json'), manifest_data)
+            data = archive.read(backend_path)
+        self.assertEqual(data, (dist/asset['name']).read_bytes())
+        self.assertEqual(len(data), asset['size'])
+        self.assertEqual(hashlib.sha256(data).hexdigest(), asset['sha256'])
+        sums = dict(line.split('  ', 1)[::-1] for line in (dist/'SHA256SUMS').read_text().splitlines())
+        self.assertEqual(sums['uficpy-mirror.zip'], hashlib.sha256((dist/'uficpy-mirror.zip').read_bytes()).hexdigest())
+        # Republishing a different tag replaces this release's bundle rather
+        # than carrying stale backends into every subsequent mirror download.
+        self.package('v-next')
+        with zipfile.ZipFile(dist/'uficpy-mirror.zip') as archive:
+            self.assertEqual(archive.namelist(), ['releases/v-next/uficpy-arm64.tar.gz', 'release.json'])
+
+    def test_dot_tags_cannot_escape_version_directory(self):
+        for tag in ['.', '..', '../v1']:
+            with self.subTest(tag=tag), self.assertRaisesRegex(ValueError, 'tag/repository'):
+                self.package(tag)
+        self.assertFalse((self.root/'dist/uficpy-mirror.zip').exists())
 
     def test_private_token_is_never_published(self):
         (self.root/'config.json').write_text(json.dumps({'token': 'a'*64}))
