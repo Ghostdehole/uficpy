@@ -1,0 +1,9 @@
+{
+  "reviewed_version": "5.0.1",
+  "source_sha256": {
+    "Streamer.java": "6e0183bd0373b2f85867a3196cdc3829696782d3cf1f807f131f923b9dff8eff",
+    "ControlMessageReader.java": "db10123f91857b7444ce971cbf7c254cc3ffb489dc3630f5de58d2c947765cd9",
+    "DesktopConnection.java": "4907a37c7c84d3012e76329f3761d8fcc05488ace71fbaf013048d33f21e414c",
+    "Options.java": "d210ce50bb429a7be943e08b2dc445e309ad67c3de23a8b5f222e2d10b612a62"
+  }
+}

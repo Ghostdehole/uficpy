@@ -1,0 +1,17 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {execFileSync} from 'node:child_process';
+import {nals,annex,parsePacket,spsInfo,mapPoint,concat} from '../web/h264.mjs';
+import {initSegment,fragment} from '../web/mp4.mjs';
+export const raw=fs.readFileSync(new URL('./fixtures/sample.h264',import.meta.url));
+export const units=nals(raw),sps=units.find(n=>(n[0]&31)===7),pps=units.find(n=>(n[0]&31)===8);
+export const frames=[];let frame=[];
+for(const n of units){if((n[0]&31)===9&&frame.length){frames.push(annex(...frame));frame=[];}frame.push(n);}if(frame.length)frames.push(annex(...frame));
+test('Annex-B handles 3/4 byte prefixes and multiple NALs',()=>{assert.deepEqual(nals(new Uint8Array([0,0,1,7,9,0,0,0,1,8,4])).map(n=>[...n]),[[7,9],[8,4]]);assert.equal(spsInfo(sps).width,160);assert.equal(spsInfo(sps).height,96);});
+test('scrcpy 4.1/5.0.1 flags and original timestamps survive transport',()=>{const b=new ArrayBuffer(14),d=new DataView(b);d.setBigUint64(0,(1n<<61n)|987654321n);d.setUint32(8,2);const p=parsePacket(b);assert.equal(p.key,true);assert.equal(p.config,false);assert.equal(p.pts,987654321);d.setBigUint64(0,1n<<62n);assert.equal(parsePacket(b).config,true);d.setBigUint64(0,1n<<63n);assert.throws(()=>parsePacket(b));});
+test('touch ignores letterbox and clamps captured drag',()=>{const rect={left:10,top:20,width:1000,height:1000};assert.equal(mapPoint(rect,720,1280,20,500),null);assert.deepEqual(mapPoint(rect,720,1280,510,520),{x:360,y:640});assert.deepEqual(mapPoint(rect,720,1280,9999,9999,true),{x:719,y:1279});});
+test('fragmented MP4 decodes every source frame with identical pixels',()=>{const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'uficpy-mp4-'));try{const mp4=concat(initSegment(sps,pps),...frames.map((f,i)=>fragment(f,nals(f).some(n=>(n[0]&31)===5),i*33333,33333,i+1)));const file=path.join(tmp,'sample.mp4');fs.writeFileSync(file,mp4);const hashes=f=>execFileSync('ffmpeg',['-v','error','-i',f,'-f','framemd5','-']).toString().split('\n').filter(l=>l&&!l.startsWith('#')).map(l=>l.split(',').at(-1).trim());const expected=hashes(new URL('./fixtures/sample.h264',import.meta.url).pathname),actual=hashes(file);assert.equal(actual.length,30);assert.deepEqual(actual,expected);}finally{fs.rmSync(tmp,{recursive:true,force:true});}});
+test('hidden or invalid stage cannot create non-finite touch coordinates',()=>{for(const rect of [{left:0,top:0,width:0,height:100},{left:0,top:0,width:100,height:0}])assert.equal(mapPoint(rect,720,1280,0,0,true),null);assert.equal(mapPoint({left:0,top:0,width:100,height:100},720,1280,NaN,5),null);});

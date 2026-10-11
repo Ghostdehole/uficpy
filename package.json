@@ -1,0 +1,12 @@
+{
+  "name": "uficpy-tests",
+  "version": "2.2.0",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "browser": "node tests/browser.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
+}

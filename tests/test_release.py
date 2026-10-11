@@ -1,0 +1,107 @@
+"""Check the archives and manifests before they become public release assets."""
+import contextlib
+import hashlib
+import importlib.util
+import io
+import json
+import os
+import pathlib
+import subprocess
+import sys
+import tarfile
+import tempfile
+import unittest
+from unittest.mock import patch
+import zipfile
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT/'scripts'))
+try:
+    spec = importlib.util.spec_from_file_location('package_release', ROOT/'scripts/package_release.py')
+    package = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(package)
+finally:
+    sys.path.pop(0)
+
+
+class ReleaseTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = pathlib.Path(self.temp.name)
+        for name in package.FILES:
+            if name != 'uficpy':
+                (self.root/name).write_text('fixture\n')
+        (self.root/'VERSION').write_text('9.9.9\n')
+        (self.root/'version.txt').write_text('5.0.1\n')
+        (self.root/'core-lock.json').write_text(json.dumps({'version': '5.0.1', 'sha256': hashlib.sha256((self.root/'scrcpy-server.jar').read_bytes()).hexdigest()}))
+        (self.root/'config.json').write_text('{"token":""}')
+        (self.root/'licenses').mkdir()
+        (self.root/'licenses/notice.txt').write_text('license')
+        (self.root/'dist').mkdir()
+        binary = bytearray(20)
+        binary[:6] = b'\x7fELF\x02\x01'
+        binary[18:20] = (183).to_bytes(2, 'little')
+        (self.root/'dist/uficpy').write_bytes(binary)
+
+    def package(self):
+        with patch.object(package, 'ROOT', self.root), patch.object(sys, 'argv', ['package_release.py', '--tag', 'v-test']), contextlib.redirect_stdout(io.StringIO()):
+            package.main()
+
+    def test_release_contract_and_source_cleanup(self):
+        for directory in ['.github/workflows', 'local-downloads', 'scripts/__pycache__']:
+            (self.root/directory).mkdir(parents=True)
+        (self.root/'.github/workflows/release.yml').write_text('workflow')
+        (self.root/'local-downloads/secret.txt').write_text('private')
+        (self.root/'scripts/__pycache__/cached.pyc').write_bytes(b'cache')
+        for name in ['fixture-server', 'config.local.json', '.env', 'uficpy.log']:
+            (self.root/name).write_text('private')
+        self.package()
+        dist = self.root/'dist'
+        manifest = json.loads((dist/'release.json').read_text())
+        self.assertEqual(manifest['tag'], 'v-test')
+        asset = manifest['assets']['arm64']
+        self.assertEqual(asset['size'], (dist/asset['name']).stat().st_size)
+        self.assertEqual(asset['sha256'], hashlib.sha256((dist/asset['name']).read_bytes()).hexdigest())
+        index = json.loads((dist/'repo.json').read_text())
+        self.assertEqual(index['download_url'], 'https://github.com/Ghostdehole/uficpy/releases/download/v-test')
+        self.assertEqual(index['res']['data']['content'][0]['size'], (dist/'uficpy_plugin.js').stat().st_size)
+        with zipfile.ZipFile(dist/'uficpy-source.zip') as archive:
+            names = archive.namelist()
+            self.assertIn('uficpy/.github/workflows/release.yml', names)
+            self.assertIn('uficpy/core-lock.json', names)
+            self.assertFalse(any(any(item in name for item in ['local-downloads', '__pycache__', '/dist/', 'fixture-server', 'config.local', '.env', '.log']) for name in names))
+        with tarfile.open(dist/asset['name']) as archive:
+            for entry in archive.getmembers():
+                self.assertTrue(entry.isfile())
+                self.assertFalse(entry.name.startswith('/') or '..' in pathlib.PurePosixPath(entry.name).parts)
+            self.assertEqual(archive.getmember('uficpy').mode, 0o700)
+
+    def test_private_token_is_never_published(self):
+        (self.root/'config.json').write_text(json.dumps({'token': 'a'*64}))
+        with self.assertRaisesRegex(ValueError, 'access token'):
+            self.package()
+        self.assertFalse((self.root/'dist/uficpy-arm64.tar.gz').exists())
+
+    def test_core_version_mismatch_stops_packaging(self):
+        (self.root/'version.txt').write_text('0.0.0')
+        with self.assertRaisesRegex(ValueError, 'version.txt'):
+            self.package()
+
+    def test_schedule_retries_changed_application_or_commit(self):
+        bin_dir = self.root/'bin'
+        bin_dir.mkdir()
+        gh = bin_dir/'gh'
+        gh.write_text('#!/bin/sh\nprintf "%s" "$TEST_RELEASE_JSON"\n')
+        gh.chmod(0o700)
+        cases = [('v9.9.9-scrcpy5.0.1-build.1', 'current', False),
+                 ('v9.9.8-scrcpy5.0.1-build.1', 'current', True),
+                 ('v9.9.9-scrcpy5.0.1-build.1', 'previous', True)]
+        for tag, commit, expected in cases:
+            output = self.root/'outputs'
+            output.write_text('')
+            env = {**os.environ, 'PATH': str(bin_dir)+':'+os.environ['PATH'], 'EVENT_NAME': 'schedule',
+                   'GITHUB_REPOSITORY': 'Ghostdehole/uficpy', 'GITHUB_SHA': 'current', 'GITHUB_OUTPUT': str(output),
+                   'TEST_RELEASE_JSON': json.dumps({'tag_name': tag, 'target_commitish': commit})}
+            subprocess.run([sys.executable, str(ROOT/'scripts/release_needed.py')], cwd=self.root, env=env, check=True, capture_output=True)
+            self.assertEqual(output.read_text().strip(), 'needed='+str(expected).lower())

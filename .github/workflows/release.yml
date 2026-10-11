@@ -1,0 +1,75 @@
+name: Build and Release
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      scrcpy_version:
+        description: 'latest / locked / exact version (protocol compatibility is checked)'
+        default: latest
+        required: true
+        type: string
+  schedule:
+    - cron: '23 3 * * *'
+permissions:
+  contents: write
+concurrency:
+  group: uficpy-release
+  cancel-in-progress: false
+jobs:
+  release:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SCRCPY_REQUEST: ${{ inputs.scrcpy_version || 'latest' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Download latest official scrcpy and verify compatibility
+        run: python3 scripts/sync_core.py --version "$SCRCPY_REQUEST"
+      - name: Skip unchanged scheduled releases
+        id: check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: python3 scripts/release_needed.py
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        if: steps.check.outputs.needed == 'true'
+        with:
+          go-version: '1.27.x'
+          cache: true
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        if: steps.check.outputs.needed == 'true'
+        with:
+          node-version: '24'
+          cache: npm
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+        if: steps.check.outputs.needed == 'true'
+      - run: npm ci
+        if: steps.check.outputs.needed == 'true'
+      - run: npx playwright install --with-deps chrome
+        if: steps.check.outputs.needed == 'true'
+      - name: Tests including Chromium video and plugin
+        if: steps.check.outputs.needed == 'true'
+        run: sh scripts/test.sh
+      - name: Build and package
+        if: steps.check.outputs.needed == 'true'
+        id: package
+        run: |
+          APP_VERSION=$(cat VERSION)
+          CORE_VERSION=$(cat version.txt)
+          RELEASE_TAG="v${APP_VERSION}-scrcpy${CORE_VERSION}-build.${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -buildvcs=false -trimpath -ldflags="-s -w -X main.appVersion=${APP_VERSION}" -o dist/uficpy .
+          python3 scripts/package_release.py --tag "$RELEASE_TAG" --repository "$GITHUB_REPOSITORY"
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+      - name: Upload complete release as draft, then publish atomically
+        if: steps.check.outputs.needed == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.package.outputs.tag }}
+        run: |
+          python3 scripts/release_notes.py > dist/release-notes.md
+          gh release create "$RELEASE_TAG" dist/uficpy-arm64.tar.gz dist/uficpy-source.zip dist/uficpy_plugin.js dist/repo.json dist/release.json dist/core-lock.json dist/SHA256SUMS --draft --target "$GITHUB_SHA" --title "uficpy $RELEASE_TAG" --notes-file dist/release-notes.md
+          gh release edit "$RELEASE_TAG" --draft=false --latest

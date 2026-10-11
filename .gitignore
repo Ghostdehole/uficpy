@@ -1,0 +1,11 @@
+/uficpy
+/uficpy-host
+/fixture-server
+/dist/
+/node_modules/
+/test-results/
+__pycache__/
+*.log
+*.pid
+*.ready
+config.local.json
