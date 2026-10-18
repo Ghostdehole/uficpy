@@ -8,7 +8,6 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -95,6 +94,16 @@ func captureRunner(dir string, c Config) func(context.Context, *hub) error {
 			return e
 		}
 		defer v.Close()
+		// scrcpy accepts enabled sockets in video, audio, control order. Even if
+		// Android cannot capture audio, its socket must still occupy this slot.
+		var audio net.Conn
+		if !c.NoAudio {
+			audio, e = dialSocket(ctx, name)
+			if e != nil {
+				return fmt.Errorf("连接音频 socket: %w", e)
+			}
+			defer audio.Close()
+		}
 		ctrl, e := dialSocket(ctx, name)
 		if e != nil {
 			return e
@@ -102,18 +111,41 @@ func captureRunner(dir string, c Config) func(context.Context, *hub) error {
 		defer ctrl.Close()
 		h.setControl(ctrl)
 		defer h.setControl(nil)
-		go func() { <-ctx.Done(); v.Close(); ctrl.Close() }()
+		go func() {
+			<-ctx.Done()
+			v.Close()
+			ctrl.Close()
+			if audio != nil {
+				audio.Close()
+			}
+		}()
 		// Consume clipboard/ack messages, and restart both sockets together if
 		// control disconnects instead of leaving a working video with dead input.
 		go func() {
-			io.Copy(io.Discard, ctrl)
+			_ = consumeDeviceMessages(ctrl, h)
 			cancel()
 		}()
 		h.status("connected", "视频和控制 socket 已连接，等待首个编码包")
+		if audio != nil {
+			audioCtx, stopAudio := context.WithCancel(ctx)
+			audioDone := make(chan struct{})
+			go func() {
+				defer close(audioDone)
+				consumeAudio(audioCtx, audio, h)
+			}()
+			defer func() { stopAudio(); audio.Close(); <-audioDone }()
+		} else {
+			h.audioStatus("disabled", "设备声音采集未开启")
+		}
 		v.SetReadDeadline(time.Now().Add(15 * time.Second))
+		if !c.NoAudio {
+			if e := readStreamCodec(v, h264CodecID); e != nil {
+				return fmt.Errorf("视频流协商: %w", e)
+			}
+		}
 		first := true
 		for {
-			p, e := readPacket(v)
+			p, e := readCaptureVideoPacket(v, !c.NoAudio)
 			if e != nil {
 				return fmt.Errorf("读取视频流: %w", e)
 			}
@@ -129,9 +161,12 @@ func captureRunner(dir string, c Config) func(context.Context, *hub) error {
 
 func captureArgs(c Config, id uint32) []string {
 	args := []string{"/", "com.genymobile.scrcpy.Server", coreLock.Version,
-		fmt.Sprintf("scid=%08x", id), "log_level=" + c.LogLevel, "video=true", "video_codec=h264", "audio=false", "control=true", "tunnel_forward=true", "cleanup=false", "clipboard_autosync=false", "send_dummy_byte=false", "send_device_meta=false", "send_stream_meta=false", "send_frame_meta=true",
+		fmt.Sprintf("scid=%08x", id), "log_level=" + c.LogLevel, "video=true", "video_codec=h264", fmt.Sprintf("audio=%t", !c.NoAudio), "control=true", "tunnel_forward=true", "cleanup=false", "clipboard_autosync=false", "send_dummy_byte=false", "send_device_meta=false", fmt.Sprintf("send_stream_meta=%t", !c.NoAudio), "send_frame_meta=true",
 		fmt.Sprintf("max_size=%d", c.MaxSize), fmt.Sprintf("max_fps=%d", c.MaxFps), fmt.Sprintf("video_bit_rate=%d", c.BitRate), fmt.Sprintf("display_id=%d", c.DisplayID), fmt.Sprintf("downsize_on_error=%t", c.DownsizeOnError),
 		"video_codec_options=" + c.VideoCodecOptions}
+	if !c.NoAudio {
+		args = append(args, "audio_codec=raw", "audio_source="+c.AudioSource)
+	}
 	if c.VideoEncoder != "" {
 		args = append(args, "video_encoder="+c.VideoEncoder)
 	}

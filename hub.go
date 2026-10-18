@@ -42,6 +42,8 @@ type hub struct {
 	packets, bytes   uint64
 	control          net.Conn
 	controlMu        sync.Mutex
+	clipboard        *clipboardRequest
+	displayOff       bool
 	runner           func(context.Context, *hub) error
 	done             chan struct{}
 }
@@ -111,11 +113,14 @@ func (h *hub) add() *client {
 func (h *hub) remove(c *client) {
 	h.releaseControls(c)
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	if h.clients[c] {
 		delete(h.clients, c)
 		close(c.queue)
 	}
+	h.mu.Unlock()
+	// Restore before scheduling cancellation: IdleSeconds may be zero.
+	h.restoreDisplayIfUnwatched()
+	h.mu.Lock()
 	if len(h.clients) == 0 && h.idle == nil && h.cancel != nil {
 		h.idle = time.AfterFunc(time.Duration(h.limits.IdleSeconds)*time.Second, func() {
 			h.mu.Lock()
@@ -126,6 +131,7 @@ func (h *hub) remove(c *client) {
 			}
 		})
 	}
+	h.mu.Unlock()
 }
 func (h *hub) run(ctx context.Context) {
 	defer func() {
@@ -230,9 +236,42 @@ func (h *hub) health() map[string]any {
 func (h *hub) setControl(c net.Conn) {
 	h.controlMu.Lock()
 	defer h.controlMu.Unlock()
+	if h.clipboard != nil {
+		h.finishClipboardLocked("", "控制连接已重启，请重新读取剪贴板")
+	}
+	if h.control != c {
+		// Restore a display disabled by this session before its socket closes.
+		h.restoreDisplayLocked()
+	}
+	h.displayOff = false
 	h.control = c
 	h.activePointers = 0
 	h.heldKeys = make(map[uint32]int)
+}
+
+func (h *hub) restoreDisplayIfUnwatched() {
+	h.controlMu.Lock()
+	defer h.controlMu.Unlock()
+	h.mu.Lock()
+	unwatched := len(h.clients) == 0
+	h.mu.Unlock()
+	if unwatched {
+		h.restoreDisplayLocked()
+	}
+}
+
+// Caller holds controlMu. The write is bounded before any cancellation can
+// kill app_process or close the socket used to restore physical display power.
+func (h *hub) restoreDisplayLocked() {
+	if h.control != nil && h.displayOff {
+		h.control.SetWriteDeadline(time.Now().Add(time.Second))
+		n, err := h.control.Write([]byte{10, 1})
+		if err == nil && n == 2 {
+			h.displayOff = false
+		} else {
+			h.control.Close()
+		}
+	}
 }
 
 // All clients share one Android input device. Remap each browser pointer to a
@@ -241,8 +280,31 @@ func (h *hub) setControl(c net.Conn) {
 func (h *hub) sendControl(c *client, b []byte) error {
 	h.controlMu.Lock()
 	defer h.controlMu.Unlock()
+	h.mu.Lock()
+	stopped := h.stopped
+	h.mu.Unlock()
+	if stopped {
+		return fmt.Errorf("服务正在停止")
+	}
+	if len(b) == 0 {
+		return fmt.Errorf("空控制消息")
+	}
 	if h.control == nil {
 		return fmt.Errorf("控制通道未就绪")
+	}
+	if b[0] == 8 {
+		if h.clipboard != nil {
+			return fmt.Errorf("上一次剪贴板读取尚未结束，请等待返回或采集连接自动重建后重试")
+		}
+		h.mu.Lock()
+		connected := h.clients[c]
+		h.mu.Unlock()
+		if !connected {
+			return fmt.Errorf("客户端已断开")
+		}
+		r := &clipboardRequest{owner: c, conn: h.control}
+		h.clipboard = r
+		r.timer = time.AfterFunc(5*time.Second, func() { h.expireClipboard(r) })
 	}
 	if c.controlConn != h.control {
 		c.controlConn = h.control
@@ -310,15 +372,22 @@ func (h *hub) sendControl(c *client, b []byte) error {
 		// A partial control frame corrupts this stream. End this generation so
 		// subsequent frames cannot be interpreted as the missing bytes.
 		h.control.Close()
+		if b[0] == 8 {
+			h.finishClipboardLocked("", "剪贴板读取请求发送失败，请重新连接")
+		}
+	} else if b[0] == 10 {
+		h.displayOff = b[1] == 0
 	}
 	return e
 }
 func (h *hub) close() {
+	h.controlMu.Lock()
 	h.mu.Lock()
 	h.stopped = true
 	if h.idle != nil {
 		h.idle.Stop()
 	}
+	h.restoreDisplayLocked()
 	if h.cancel != nil {
 		h.cancel()
 	}
@@ -328,6 +397,7 @@ func (h *hub) close() {
 		close(c.queue)
 	}
 	h.mu.Unlock()
+	h.controlMu.Unlock()
 	if d != nil {
 		<-d
 	}
@@ -338,6 +408,12 @@ func (h *hub) close() {
 func (h *hub) releaseControls(c *client) {
 	h.controlMu.Lock()
 	defer h.controlMu.Unlock()
+	if h.clipboard != nil && h.clipboard.owner == c {
+		// The protocol has no reply ID: keep a tombstone to absorb this
+		// client's late response instead of disclosing it to another viewer.
+		// Keep its deadline: a missing response must still restart the stream.
+		h.clipboard.owner = nil
+	}
 	if c.controlConn == h.control && h.control != nil {
 		h.control.SetWriteDeadline(time.Now().Add(time.Second))
 		writeRelease := func(b []byte) {

@@ -3,7 +3,7 @@
 // uficpy 2.2.3 — UFI-TOOLS plugin.
 (async () => {
     'use strict';
-    const version = '2.2.3', path = '/data/uficpy', boot = '/sdcard/ufi_tools_boot.sh';
+    const version = '2.3.0', path = '/data/uficpy', boot = '/sdcard/ufi_tools_boot.sh';
     const defaultRepository='Ghostdehole/uficpy';
     const marker = '# UFICPY_V2_AUTOSTART';
     const oldBootLine = '(cd /data/uficpy && sh service.sh start)';
@@ -186,12 +186,13 @@ mv ${staged} ${path}/config.json`);
         ${grid(inputs(['max_size','max_fps','bit_rate']))}
         <label><input type="checkbox" data-field="read_only" ${conf.read_only?'checked':''}> 只读投屏</label>
         <details style="margin:14px 0"><summary>编码与采集</summary>${grid(inputs(['video_encoder','video_codec_options','display_id','crop','capture_orientation']))}<label><input type="checkbox" data-field="downsize_on_error" ${conf.downsize_on_error?'checked':''}> 编码失败时允许降低分辨率</label><p>设为原生尺寸或不限帧率时，实际表现取决于设备、网络和浏览器。</p></details>
+        <details style="margin:14px 0"><summary>设备声音</summary><label><input type="checkbox" data-field="audio_enabled" ${conf.no_audio===false?'checked':''}> 采集设备音频（Android 11+）</label><label style="display:block;margin-top:10px">音频来源 <select data-field="audio_source"><option value="output" ${conf.audio_source!=='mic'?'selected':''}>设备播放声音</option><option value="mic" ${conf.audio_source==='mic'?'selected':''}>设备麦克风</option></select></label><p>默认关闭。选择麦克风会采集设备周围声音；播放来源可能受应用限制。保存后，在播放器“工具 → 录屏与声音”中点击“开启声音”。浏览器音量不会发送设备音量键。</p></details>
         <details style="margin:14px 0"><summary>连接与资源</summary>${grid(inputs(['port','listen','max_clients','queue_mb','gop_mb','idle_seconds']))}<p>修改端口后，播放器将使用新的连接地址。</p></details>
         <details style="margin:14px 0"><summary>系统显示</summary>${grid(inputs(['wm_size','wm_density']))}<p>保存仅记录尺寸和 DPI；在“管理与诊断 → 应用系统显示”中单独应用，影响设备上的所有应用。</p></details>
         <button id="uficpy_save">保存设置</button></div>`});
         const field=k=>el.querySelector(`[data-field="${k}"]`);
         el.querySelectorAll('[data-preset]').forEach(b=>b.onclick=()=>{const presets={eco:[1280,30,4000000],balanced:[1920,60,12000000],quality:[2560,60,24000000],native:[0,0,40000000]};['max_size','max_fps','bit_rate'].forEach((k,i)=>field(k).value=presets[b.dataset.preset][i]);});
-        el.querySelector('#uficpy_save').onclick=()=>guarded(async()=>{const c={...conf,no_audio:true};for(const [k,,type]of fields)c[k]=type==='number'?Number(field(k).value):field(k).value.trim();for(const k of ['downsize_on_error','read_only'])c[k]=field(k).checked;if(!await saveConfiguration(c))return;dismiss({id,el});createToast('配置已应用','green');});showModal(id);
+        el.querySelector('#uficpy_save').onclick=()=>guarded(async()=>{const c={...conf,no_audio:!field('audio_enabled').checked,audio_source:field('audio_source').value};for(const [k,,type]of fields)c[k]=type==='number'?Number(field(k).value):field(k).value.trim();for(const k of ['downsize_on_error','read_only'])c[k]=field(k).checked;if(!await saveConfiguration(c))return;dismiss({id,el});createToast('配置已应用','green');});showModal(id);
     }
     async function advancedConfig() {
         const c=await readConfig();const {id,el}=modal({name:'uficpy_json',title:'完整 JSON 配置',maxWidth:'820px',showConfirm:false,onClose:()=>true,
