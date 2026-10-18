@@ -5,6 +5,7 @@ const fs=require('fs'),path=require('path'),os=require('os'),cp=require('child_p
 module.exports=async function downloadTests(browser,origin,errors,root){
  const source=fs.readFileSync(path.join(root,'uficpy_plugin.js'),'utf8');
  const version=fs.readFileSync(path.join(root,'VERSION'),'utf8').trim();
+ const playerOrigin=new URL(origin),config={...JSON.parse(fs.readFileSync(path.join(root,'config.json'),'utf8')),token:'a'.repeat(64),port:Number(playerOrigin.port||(playerOrigin.protocol==='https:'?443:80))};
  const repository='Ghostdehole/uficpy',base='https://download.doevt.top/uficpy';
  const manifest={schema:1,version,scrcpy_version:'5.0.1',repository,tag:'v'+version+'-test',assets:{arm64:{name:'uficpy-arm64.tar.gz',sha256:'b'.repeat(64),size:1000000},armv7:{name:'uficpy-armv7.tar.gz',sha256:'c'.repeat(64),size:900000}}};
  const githubManifest=`https://github.com/${repository}/releases/latest/download/release.json`,mirrorManifest=base+'/release.json';
@@ -13,9 +14,9 @@ module.exports=async function downloadTests(browser,origin,errors,root){
  const deviceFacts=(uname='aarch64',abilist64='arm64-v8a',abilist='arm64-v8a,armeabi-v7a',abi='arm64-v8a')=>`UFICPY_DEVICE_UNAME=${uname}\nUFICPY_DEVICE_ABILIST64=${abilist64}\nUFICPY_DEVICE_ABILIST=${abilist}\nUFICPY_DEVICE_ABI=${abi}`;
 
  async function initialize(p,initial){
-  await p.evaluate(({initial,manifest,device})=>{
+  await p.evaluate(({initial,manifest,device,config})=>{
    if(initial)for(const [key,value]of Object.entries(initial))localStorage.setItem(key,value);
-   window.UFI_DATA={loginfo:'ok'};window.testCommands=[];window.testToasts=[];window.testPlans={};window.testFailure=null;window.testDevice=device;
+   window.UFI_DATA={loginfo:'ok'};window.testCommands=[];window.testToasts=[];window.testPlans={};window.testFailure=null;window.testDevice=device;window.testInstalled=false;window.testConfig=JSON.stringify(config);
    window.runShellWithRoot=async(cmd,timeout)=>{
     const url=cmd.match(/https:\/\/[A-Za-z0-9./_%-]+/)?.[0];
     window.testCommands.push({cmd,timeout,url});
@@ -30,7 +31,9 @@ module.exports=async function downloadTests(browser,origin,errors,root){
     if(outcome&&Object.hasOwn(outcome,'raw'))content=outcome.raw;
     else if(cmd.includes('UFICPY_DEVICE_UNAME'))content=window.testDevice;
     else if(url?.endsWith('/release.json'))content=JSON.stringify(outcome?.manifest||manifest);
-    else if(cmd.includes('service.sh status'))content='missing';
+    else if(cmd.includes('config.json')&&cmd.includes('timeout 2s awk'))content=window.testConfig;
+    else if(cmd.includes('service.sh status'))content=window.testInstalled?'running':'missing';
+    else if(cmd.includes('sh extracted/install.sh'))window.testInstalled=true;
     return {success:true,content:content+'\nUFICPY_OK\n'};
    };
    window.createToast=text=>window.testToasts.push(text);
@@ -42,7 +45,7 @@ module.exports=async function downloadTests(browser,origin,errors,root){
    window.showModal=id=>document.querySelector(id).style.display='block';
    window.closeModal=id=>document.querySelector(id).style.display='none';
    window.collapseGen=(a,b)=>{const el=document.querySelector(b);el.dataset.name='open';el.style.height='auto';};
-  },{initial,manifest,device:deviceFacts()});
+  },{initial,manifest,device:deviceFacts(),config});
   await p.addScriptTag({content:source});
   await p.waitForFunction(()=>document.querySelector('#uficpy_status')?.textContent.includes('未安装')&&!document.querySelector('#uficpy_actions button').disabled);
   await p.locator('#uficpy_advanced').evaluate(el=>el.parentElement.open=true);
