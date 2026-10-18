@@ -217,3 +217,48 @@ class ReleaseTests(unittest.TestCase):
         (self.root/'VERSION').write_text('../unsafe')
         with self.assertRaisesRegex(ValueError, 'application version'):
             self.package()
+
+    def test_release_notes_accept_heading_annotations(self):
+        manifest = {'version': '2.3.0', 'scrcpy_version': '5.0.1'}
+        for suffix in ['', '（未发布）', ' (Unreleased)', ' （2026-10-18）', ' (2026-10-18)', '\t']:
+            for newline in ['\n', '\r\n']:
+                with self.subTest(suffix=suffix, newline=newline):
+                    changelog = newline.join(['# Changes', '', '## 2.3.0'+suffix, '', '- Current.',
+                                               '### Details', '- More.', '', '##\t2.2.3', '- Old.'])
+                    notes = release_notes(manifest, changelog)
+                    self.assertIn('- Current.', notes)
+                    self.assertIn('### Details', notes)
+                    self.assertNotIn('- Old.', notes)
+                    self.assertTrue(notes.endswith('scrcpy 5.0.1\n'))
+
+    def test_release_notes_reject_empty_or_similar_version_sections(self):
+        manifest = {'version': '2.3.0', 'scrcpy_version': '5.0.1'}
+        for changelog in [
+            '## 2.3.0',
+            '## 2.3.0（未发布）\n\n',
+            '## 2.3.0\n\n## 2.2.3\n- Old.\n',
+            '## 2.3.0（未发布）\r\n\t\r\n##\t2.2.3\r\n- Old.\r\n',
+            '## 2.3.01\n- Other.\n',
+            '## 2.3.0-rc.1\n- Other.\n',
+            '## 2x3x0\n- Other.\n',
+            '## 2.3.0 (unfinished\n- Other.\n',
+        ]:
+            with self.subTest(changelog=changelog), self.assertRaisesRegex(ValueError, 'Missing changelog'):
+                release_notes(manifest, changelog)
+
+    def test_release_notes_cli_for_repository_version(self):
+        # Use the real files shipped in this checkout, not a synthetic old
+        # version: a release-only failure must be caught before merging a PR.
+        manifest = {'version': (ROOT/'VERSION').read_text().strip(),
+                    'scrcpy_version': (ROOT/'version.txt').read_text().strip()}
+        changelog = (ROOT/'CHANGELOG.md').read_text(encoding='utf-8')
+        (self.root/'dist/release.json').write_text(json.dumps(manifest), encoding='utf-8')
+        (self.root/'CHANGELOG.md').write_text(changelog, encoding='utf-8')
+        (self.root/'scripts').mkdir()
+        script = self.root/'scripts/release_notes.py'
+        script.write_bytes((ROOT/'scripts/release_notes.py').read_bytes())
+        result = subprocess.run([sys.executable, str(script)], cwd=self.root/'dist',
+                                check=True, capture_output=True, text=True, encoding='utf-8')
+        self.assertEqual(result.stdout, release_notes(manifest, changelog))
+        self.assertTrue(result.stdout.startswith('- '))
+        self.assertNotIn('\n## ', result.stdout)

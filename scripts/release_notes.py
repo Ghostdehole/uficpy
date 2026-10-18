@@ -7,7 +7,10 @@ import re
 
 def release_notes(manifest, changelog):
     version = re.escape(manifest['version'])
-    match = re.search(r'^## '+version+r'\s*\n(.*?)(?=^## |\Z)', changelog, re.M | re.S)
+    # A status or date may follow the exact version. Keep heading whitespace
+    # on one line so an empty section cannot absorb the next release heading.
+    heading = r'^##[ \t]+'+version+r'(?:[ \t]*(?:（[^）\r\n]+）|\([^)\r\n]+\)))?[ \t]*(?:\r?\n|\Z)'
+    match = re.search(heading+r'(.*?)(?=^##(?:[ \t]|\r?$)|\Z)', changelog, re.M | re.S)
     if not match or not match[1].strip():
         raise ValueError('Missing changelog entry for '+manifest['version'])
     return match[1].strip()+'\n\nscrcpy '+manifest['scrcpy_version']+'\n'

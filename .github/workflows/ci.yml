@@ -41,6 +41,7 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -buildvcs=false -trimpath -ldflags="-s -w -X main.appVersion=${APP_VERSION}" -o dist/uficpy-arm64 .
           CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -buildvcs=false -trimpath -ldflags="-s -w -X main.appVersion=${APP_VERSION}" -o dist/uficpy-armv7 .
           python3 scripts/package_release.py --tag "$PREVIEW_TAG" --repository "$GITHUB_REPOSITORY"
+          python3 scripts/release_notes.py > dist/release-notes.md
       - name: Upload preview packages for device testing
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -50,5 +51,6 @@ jobs:
             dist/uficpy-armv7.tar.gz
             dist/uficpy_plugin-v*.js
             dist/SHA256SUMS
+            dist/release-notes.md
           if-no-files-found: error
           retention-days: 14
