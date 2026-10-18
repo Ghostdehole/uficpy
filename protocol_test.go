@@ -218,8 +218,8 @@ func TestConfigValidation(t *testing.T) {
 		t.Fatal(e)
 	}
 	c.NoAudio = false
-	if c.validate(false) == nil {
-		t.Fatal("unsupported audio accepted")
+	if e := c.validate(false); e != nil {
+		t.Fatalf("optional audio rejected: %v", e)
 	}
 	c = defaults()
 	c.WmSize = "720x1280; reboot"

@@ -23,7 +23,7 @@ import (
 
 //go:embed web/*
 var webFiles embed.FS
-var appVersion = "2.2.3"
+var appVersion = "2.3.0"
 
 func authorized(r *http.Request, token string) bool {
 	v := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
@@ -43,6 +43,7 @@ func sameOrigin(r *http.Request) bool {
 }
 func routes(c Config, h *hub) http.Handler {
 	mux := http.NewServeMux()
+	registerTransferRoutes(mux, c)
 	files, _ := fs.Sub(webFiles, "web")
 	mux.Handle("/", http.FileServer(http.FS(files)))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -59,7 +60,13 @@ func routes(c Config, h *hub) http.Handler {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"version": appVersion, "core_version": coreLock.Version, "read_only": c.ReadOnly, "allow_volume_keys": c.AllowVolumeKeys, "allowed_keys": c.AllowedKeys, "max_size": c.MaxSize, "max_fps": c.MaxFps, "bit_rate": c.BitRate})
+		json.NewEncoder(w).Encode(map[string]any{
+			"version": appVersion, "core_version": coreLock.Version, "read_only": c.ReadOnly,
+			"allow_volume_keys": c.AllowVolumeKeys, "allowed_keys": c.AllowedKeys,
+			"max_size": c.MaxSize, "max_fps": c.MaxFps, "bit_rate": c.BitRate,
+			"transfers": ExposeTransferLimits(), "device_tools": true,
+			"audio": map[string]any{"enabled": !c.NoAudio, "source": c.AudioSource},
+		})
 	})
 	up := websocket.Upgrader{CheckOrigin: sameOrigin, Subprotocols: []string{"uficpy-v2"}, HandshakeTimeout: 5 * time.Second}
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
@@ -117,6 +124,10 @@ func routes(c Config, h *hub) http.Handler {
 				}
 				if e = h.sendControl(cl, b); e != nil {
 					log.Printf("control: %v", e)
+					reply, _ := json.Marshal(map[string]string{"type": "control_error", "detail": e.Error()})
+					h.mu.Lock()
+					h.enqueue(cl, message{1, reply})
+					h.mu.Unlock()
 				}
 			}
 		}()

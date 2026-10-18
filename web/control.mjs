@@ -12,9 +12,18 @@ export function scrollPacket(point,dimensions,horizontal,vertical){
  const fixed=value=>Math.max(-32768,Math.min(32767,Math.round(value/16*32768)));
  const b=new ArrayBuffer(21),d=new DataView(b);d.setUint8(0,3);d.setUint32(1,point.x);d.setUint32(5,point.y);d.setUint16(9,dimensions.width);d.setUint16(11,dimensions.height);d.setInt16(13,fixed(horizontal));d.setInt16(15,fixed(vertical));return b;
 }
-export function textPacket(text){
+export function clipboardPacket(text,paste=false){
  const data=new TextEncoder().encode(text);if(data.length>1024)throw Error('文字最多为 1024 个 UTF-8 字节，请分段发送');
- const b=new Uint8Array(14+data.length),d=new DataView(b.buffer);b[0]=9;b[9]=1;d.setUint32(10,data.length);b.set(data,14);return b;
+ const b=new Uint8Array(14+data.length),d=new DataView(b.buffer);b[0]=9;b[9]=paste?1:0;d.setUint32(10,data.length);b.set(data,14);return b;
+}
+export function textPacket(text){return clipboardPacket(text,true);}
+export function clipboardRequestPacket(){return new Uint8Array([8,0]);}
+export function displayPowerPacket(on){return new Uint8Array([10,on?1:0]);}
+export function panelPacket(panel){const types={notifications:5,settings:6,collapse:7};if(!Object.hasOwn(types,panel))throw Error('未知面板');return new Uint8Array([types[panel]]);}
+export function rotatePacket(){return new Uint8Array([11]);}
+export function startAppPacket(packageName){
+ if(typeof packageName!=='string'||packageName.length>255||!/^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/.test(packageName))throw Error('请输入完整应用包名，例如 com.android.settings');
+ const data=new TextEncoder().encode(packageName),b=new Uint8Array(2+data.length);b[0]=16;b[1]=data.length;b.set(data,2);return b;
 }
 const keys={ArrowUp:19,ArrowDown:20,ArrowLeft:21,ArrowRight:22,Enter:66,NumpadEnter:66,Tab:61,Space:62,Backspace:67,Delete:112,Escape:4,Home:122,End:123,PageUp:92,PageDown:93};
 export function keyboardKey(event){return event.altKey||event.ctrlKey||event.metaKey||event.shiftKey||event.isComposing?null:keys[event.code]??null;}

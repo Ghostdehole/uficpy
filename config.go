@@ -20,6 +20,7 @@ type Config struct {
 	MaxFps             int      `json:"max_fps"`
 	BitRate            int      `json:"bit_rate"`
 	NoAudio            bool     `json:"no_audio"`
+	AudioSource        string   `json:"audio_source"`
 	Port               int      `json:"port"`
 	Listen             string   `json:"listen"`
 	Token              string   `json:"token"`
@@ -42,7 +43,7 @@ type Config struct {
 }
 
 func defaults() Config {
-	return Config{MaxSize: 1920, MaxFps: 60, BitRate: 12000000, NoAudio: true, Port: 9528, Listen: "0.0.0.0", VideoCodecOptions: "i-frame-interval=1,max-bframes=0", LogLevel: "info", AllowedKeys: []uint32{3, 4, 19, 20, 21, 22, 23, 61, 62, 66, 67, 92, 93, 111, 112, 122, 123, 124, 187, 224}, MaxClients: 8, QueueMB: 16, GOPMB: 8, IdleSeconds: 2}
+	return Config{MaxSize: 1920, MaxFps: 60, BitRate: 12000000, NoAudio: true, AudioSource: "output", Port: 9528, Listen: "0.0.0.0", VideoCodecOptions: "i-frame-interval=1,max-bframes=0", LogLevel: "info", AllowedKeys: []uint32{3, 4, 19, 20, 21, 22, 23, 61, 62, 66, 67, 92, 93, 111, 112, 122, 123, 124, 187, 224}, MaxClients: 8, QueueMB: 16, GOPMB: 8, IdleSeconds: 2}
 
 }
 
@@ -101,8 +102,8 @@ func (c Config) validate(requireToken bool) error {
 			return fmt.Errorf("Android keycode 超出范围")
 		}
 	}
-	if !c.NoAudio {
-		return fmt.Errorf("当前版本只有视频+控制两个通道，no_audio 必须为 true")
+	if c.AudioSource != "output" && c.AudioSource != "mic" {
+		return fmt.Errorf("audio_source 应为 output（设备声音）或 mic（设备麦克风）")
 	}
 	if c.Port < 1024 || c.Port > 65535 {
 		return fmt.Errorf("port 必须为 1024..65535")

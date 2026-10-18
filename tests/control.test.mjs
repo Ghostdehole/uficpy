@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {InputState,keyAllowed,keyboardKey,scrollPacket,textPacket,VOLUME_KEYS} from '../web/control.mjs';
+import {InputState,keyAllowed,keyboardKey,scrollPacket,textPacket,VOLUME_KEYS,clipboardPacket,clipboardRequestPacket,displayPowerPacket,panelPacket,rotatePacket,startAppPacket} from '../web/control.mjs';
 
 const dimensions={width:1080,height:1920},point={x:20,y:30};
 const capture=()=>{const packets=[];return {packets,input:new InputState((packet,releasing)=>{packets.push({data:new DataView(packet),releasing});return true;})};};
@@ -39,4 +39,20 @@ test('scroll uses scrcpy 5 signed 16-bit fixed point and saturates with correct 
 test('clipboard payload preserves UTF-8 and enforces byte limit before sending',()=>{
  const text='你好\n🎉';const packet=textPacket(text),view=new DataView(packet.buffer);assert.equal(packet[0],9);assert.equal(packet[9],1);assert.equal(view.getBigUint64(1),0n);assert.equal(view.getUint32(10),11);assert.equal(new TextDecoder().decode(packet.subarray(14)),text);
  assert.throws(()=>textPacket('中'.repeat(342)),/1024/);assert.equal(textPacket('a'.repeat(1024)).length,1038);
+});
+test('manual clipboard read and write do not request copying or pasting',()=>{
+ assert.deepEqual([...clipboardRequestPacket()],[8,0]);
+ const packet=clipboardPacket('应用');assert.equal(packet[9],0);assert.equal(new DataView(packet.buffer).getUint32(10),6);
+ assert.equal(textPacket('paste')[9],1);assert.equal(clipboardPacket('')[9],0);
+});
+test('device panel, rotation and physical display controls use precise frames',()=>{
+ assert.deepEqual([...displayPowerPacket(false)],[10,0]);assert.deepEqual([...displayPowerPacket(true)],[10,1]);
+ assert.deepEqual([...rotatePacket()],[11]);
+ for(const [panel,type] of [['notifications',5],['settings',6],['collapse',7]])assert.deepEqual([...panelPacket(panel)],[type]);
+ assert.throws(()=>panelPacket('constructor'));assert.throws(()=>panelPacket('invalid'));
+});
+test('start app accepts only exact Android package names within one-byte length',()=>{
+ const name='com.android.settings',packet=startAppPacket(name);assert.equal(packet[0],16);assert.equal(packet[1],20);assert.equal(new TextDecoder().decode(packet.subarray(2)),name);
+ for(const invalid of ['',null,'com','com..app','com.app;reboot','+com.app','?Settings','com.app/activity','com.应用','com.1app','com.app\n','a'.repeat(252)+'.app'])assert.throws(()=>startAppPacket(invalid));
+ assert.equal(startAppPacket('a'.repeat(251)+'.app').length,257);
 });

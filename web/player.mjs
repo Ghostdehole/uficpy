@@ -3,6 +3,9 @@ import {initSegment,fragment} from './mp4.mjs';
 import {loadPreferences,savePreferences} from './preferences.mjs';
 import {fetchClientOptions} from './client.mjs';
 import {InputState,keyAllowed,keyPacket,keyboardKey,scrollPacket,textPacket} from './control.mjs';
+import {DeviceTools} from './device-tools.mjs';
+import {Recorder} from './recorder.mjs';
+import {PCMPlayer,isAudioPacket} from './audio.mjs';
 const $=id=>document.getElementById(id),video=$('video'),canvas=$('canvas'),stage=$('stage'),ctx=canvas.getContext('2d',{alpha:false});
 let token=new URLSearchParams(location.hash.slice(1)).get('token')||'',ws,decoder,media,source,url;
 let sps,pps,info,needKey=true,mode='',generation=0,queue=[],queueBytes=0,pending,base,sequence=1,retryTimer,watchdog;
@@ -14,7 +17,12 @@ const status=(text,error=false)=>{$('status').textContent=text;$('status').style
 if(token)history.replaceState(null,'',location.pathname+location.search);
 const supportedMSE=()=>window.ManagedMediaSource||window.MediaSource;
 const input=new InputState(send);
+let tools;
+const audio=new PCMPlayer({onState:(state,detail)=>tools?.audioState(state,detail)});
+const recorder=new Recorder({onstate:({state})=>tools?.recordingState(state),onstop:result=>tools?.recordingStopped(result)});
+tools=new DeviceTools({send,getToken:()=>token,releaseInput:()=>input.releaseAll(),startRecording:()=>{if(ready&&!recorder.active)recorder.start();},stopRecording:()=>recorder.stop(),enableAudio:()=>audio.enable(),disableAudio:()=>audio.disable(),setVolume:value=>audio.setVolume(value)});
 function updateControls(){
+ tools.update(ready,permissions);
  document.querySelectorAll('[data-key]').forEach(b=>{b.disabled=!ready||!keyAllowed(Number(b.dataset.key),permissions,volumeUnlocked);});
  $('text').disabled=!ready||permissions.read_only;$('screenshot').disabled=!ready;
  $('access-mode').hidden=!ready||!permissions.read_only;
@@ -26,6 +34,7 @@ function updateControls(){
 }
 function lockVolume(){volumeUnlocked=false;$('volume-confirmation').value='';$('unlock-volume').disabled=true;updateControls();}
 function cleanup(){
+ recorder.stop('disconnected');audio.reset();
  input.releaseAll();generation++;clearTimeout(watchdog);ready=false;needKey=true;sps=pps=info=null;pending=null;base=undefined;sequence=1;queue=[];queueBytes=0;updateControls();
  if(ws){ws.onclose=null;ws.close();ws=null;}
  if(decoder&&decoder.state!=='closed')decoder.close();decoder=null;
@@ -56,11 +65,13 @@ async function connect(){
  ws.onmessage=e=>{
   if(epoch!==generation)return;
   try{
-   if(typeof e.data==='string'){const m=JSON.parse(e.data);if(m.type==='pong'){rtt=Date.now()-m.id;return;}if(m.state==='error'){fail(Error(m.detail));return;}if(!ready)status(m.detail);return;}
+   if(typeof e.data==='string'){const m=JSON.parse(e.data);if(m.type==='pong'){rtt=Date.now()-m.id;return;}if(tools.message(m))return;if(m.state==='error'){fail(Error(m.detail));return;}if(!ready)status(m.detail);return;}
+   if(isAudioPacket(e.data)){try{audio.push(e.data);}catch(error){audio.disable();tools.audioState('error',error.message);}return;}
    const p=parsePacket(e.data);packets++;bytes+=p.data.length;
    const units=nals(p.data);if(!units.length)throw Error('收到的 H.264 数据不含 Annex-B 起始码');
    let changed=false;
    for(const n of units){const t=n[0]&31;if(t===7){changed=changed||(!!sps&&String(sps)!==String(n));sps=n.slice();}if(t===8){changed=changed||(!!pps&&String(pps)!==String(n));pps=n.slice();}}
+   recorder.push(p,sps,pps);
    if(changed){fail(Error('屏幕方向/编码参数已变化，重新同步'));return;}
    if(p.config)return;
    const key=p.key||units.some(n=>(n[0]&31)===5);
@@ -156,7 +167,7 @@ document.addEventListener('pointerdown',event=>{if($('preferences-panel').open&&
 $('text').onclick=()=>{if(!ready||permissions.read_only)return;input.releaseAll();$('text-error').textContent='';$('text-dialog').showModal();$('paste-text').focus();};
 $('cancel-text').onclick=()=>{$('text-dialog').close();};
 $('text-form').onsubmit=event=>{event.preventDefault();if(!ready||permissions.read_only){$('text-error').textContent='设备尚未连接或处于只读模式';return;}try{if(!send(textPacket($('paste-text').value)))throw Error('发送失败，请检查连接后重试');$('paste-text').value='';$('text-dialog').close();}catch(error){$('text-error').textContent=error.message;}};
-window.addEventListener('pagehide',()=>{input.releaseAll();lockVolume();disposed=true;clearTimeout(retryTimer);cleanup();});
+window.addEventListener('pagehide',()=>{input.releaseAll();lockVolume();disposed=true;clearTimeout(retryTimer);cleanup();void audio.close().catch(()=>{});});
 window.addEventListener('pageshow',event=>{if(event.persisted){disposed=false;connect();}});
 
 $('mode').value=prefs.mode;

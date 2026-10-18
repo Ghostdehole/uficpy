@@ -1,9 +1,9 @@
 //<!-- [KANO_PLUGIN_START] uficpy_plugin.js -->
 //<script>
-// uficpy 2.2.3 — UFI-TOOLS plugin.
+// uficpy — UFI-TOOLS plugin.
 (async () => {
     'use strict';
-    const version = '2.2.3', path = '/data/uficpy', boot = '/sdcard/ufi_tools_boot.sh';
+    const version = '2.3.0', path = '/data/uficpy', boot = '/sdcard/ufi_tools_boot.sh';
     const defaultRepository='Ghostdehole/uficpy';
     const marker = '# UFICPY_V2_AUTOSTART';
     const oldBootLine = '(cd /data/uficpy && sh service.sh start)';
@@ -186,12 +186,13 @@ mv ${staged} ${path}/config.json`);
         ${grid(inputs(['max_size','max_fps','bit_rate']))}
         <label><input type="checkbox" data-field="read_only" ${conf.read_only?'checked':''}> 只读投屏</label>
         <details style="margin:14px 0"><summary>编码与采集</summary>${grid(inputs(['video_encoder','video_codec_options','display_id','crop','capture_orientation']))}<label><input type="checkbox" data-field="downsize_on_error" ${conf.downsize_on_error?'checked':''}> 编码失败时允许降低分辨率</label><p>设为原生尺寸或不限帧率时，实际表现取决于设备、网络和浏览器。</p></details>
+        <details style="margin:14px 0"><summary>设备声音</summary><label><input type="checkbox" data-field="audio_enabled" ${conf.no_audio===false?'checked':''}> 采集设备音频（Android 11+）</label><label style="display:block;margin-top:10px">音频来源 <select data-field="audio_source"><option value="output" ${conf.audio_source!=='mic'?'selected':''}>设备播放声音</option><option value="mic" ${conf.audio_source==='mic'?'selected':''}>设备麦克风</option></select></label><p>默认关闭。选择麦克风会采集设备周围声音；播放来源可能受应用限制。保存后，在播放器“工具 → 录屏与声音”中点击“开启声音”。浏览器音量不会发送设备音量键。</p></details>
         <details style="margin:14px 0"><summary>连接与资源</summary>${grid(inputs(['port','listen','max_clients','queue_mb','gop_mb','idle_seconds']))}<p>修改端口后，播放器将使用新的连接地址。</p></details>
         <details style="margin:14px 0"><summary>系统显示</summary>${grid(inputs(['wm_size','wm_density']))}<p>保存仅记录尺寸和 DPI；在“管理与诊断 → 应用系统显示”中单独应用，影响设备上的所有应用。</p></details>
         <button id="uficpy_save">保存设置</button></div>`});
         const field=k=>el.querySelector(`[data-field="${k}"]`);
         el.querySelectorAll('[data-preset]').forEach(b=>b.onclick=()=>{const presets={eco:[1280,30,4000000],balanced:[1920,60,12000000],quality:[2560,60,24000000],native:[0,0,40000000]};['max_size','max_fps','bit_rate'].forEach((k,i)=>field(k).value=presets[b.dataset.preset][i]);});
-        el.querySelector('#uficpy_save').onclick=()=>guarded(async()=>{const c={...conf,no_audio:true};for(const [k,,type]of fields)c[k]=type==='number'?Number(field(k).value):field(k).value.trim();for(const k of ['downsize_on_error','read_only'])c[k]=field(k).checked;if(!await saveConfiguration(c))return;dismiss({id,el});createToast('配置已应用','green');});showModal(id);
+        el.querySelector('#uficpy_save').onclick=()=>guarded(async()=>{const c={...conf,no_audio:!field('audio_enabled').checked,audio_source:field('audio_source').value};for(const [k,,type]of fields)c[k]=type==='number'?Number(field(k).value):field(k).value.trim();for(const k of ['downsize_on_error','read_only'])c[k]=field(k).checked;if(!await saveConfiguration(c))return;dismiss({id,el});createToast('配置已应用','green');});showModal(id);
     }
     async function advancedConfig() {
         const c=await readConfig();const {id,el}=modal({name:'uficpy_json',title:'完整 JSON 配置',maxWidth:'820px',showConfirm:false,onClose:()=>true,
@@ -226,7 +227,7 @@ mv ${staged} ${path}/config.json`);
     }
     function sourceModal(){
         const dialog=modal({name:'uficpy_sources',title:'发布源',maxWidth:'640px',showConfirm:false,onClose:()=>true,
-            content:`<div style="font-size:13px;line-height:1.7"><label for="uficpy_source_repository">GitHub 仓库</label><input id="uficpy_source_repository" type="text" autocomplete="off" spellcheck="false" style="display:block;width:100%;padding:8px;box-sizing:border-box"><p><label for="uficpy_mirror_base">备用后端下载源（可选）</label><input id="uficpy_mirror_base" type="url" autocomplete="off" spellcheck="false" placeholder="https://download.doevt.top/uficpy" style="display:block;width:100%;padding:8px;box-sizing:border-box"></p><p>填写存放 release.json 的 HTTPS 目录，留空使用 GitHub。只添加自己管理或信任的服务器；该服务器提供的程序将以 Root 权限安装。</p><label for="uficpy_download_policy">下载顺序</label><select id="uficpy_download_policy" style="display:block;width:100%;padding:8px;box-sizing:border-box"><option value="github-first">GitHub 优先，失败后尝试备用源</option><option value="mirror-first">备用源优先，失败后尝试 GitHub</option><option value="mirror-only">仅备用源</option></select><p>优先或仅使用备用源时，安装服务器已同步的版本。切换下载源时保持同一版本；清单或校验不通过时会停止安装。设置只保存在当前浏览器。</p><p id="uficpy_source_error" role="alert" style="color:#c94c4c;overflow-wrap:anywhere"></p><button id="uficpy_source_save" type="button">保存发布源</button></div>`});
+            content:`<div style="font-size:13px;line-height:1.7"><label for="uficpy_source_repository">GitHub 仓库</label><input id="uficpy_source_repository" type="text" autocomplete="off" spellcheck="false" style="display:block;width:100%;padding:8px;box-sizing:border-box"><p><label for="uficpy_mirror_base">备用后端下载源（可选）</label><input id="uficpy_mirror_base" type="url" autocomplete="off" spellcheck="false" placeholder="https://download.doevt.top/uficpy" style="display:block;width:100%;padding:8px;box-sizing:border-box"></p><p>填写存放 release.json 的 HTTPS 目录，留空使用 GitHub。只添加自己管理或信任的服务器；该服务器提供的程序将以 Root 权限安装。</p><label for="uficpy_download_policy">下载顺序</label><select id="uficpy_download_policy" style="display:block;width:100%;padding:8px;box-sizing:border-box"><option value="github-first">GitHub 优先，失败后尝试备用源</option><option value="mirror-first">备用源优先，失败后尝试 GitHub</option><option value="mirror-only">仅备用源</option></select><p>优先或仅使用备用源时，安装服务器已同步的版本。同版本下载失败、备用源提供其他构建时，会先显示完整标签，确认后才切换；清单或校验异常时停止。设置只保存在当前浏览器。</p><p id="uficpy_source_error" role="alert" style="color:#c94c4c;overflow-wrap:anywhere"></p><button id="uficpy_source_save" type="button">保存发布源</button></div>`});
         const field=id=>dialog.el.querySelector('#'+id);
         field('uficpy_source_repository').value=storage.get('uficpy_repository')||defaultRepository;
         field('uficpy_mirror_base').value=storage.get('uficpy_mirror_base')||'';
@@ -279,27 +280,46 @@ else
 fi`,10000,'读取设备架构'));
     }
     const curlSetup=`if command -v curl >/dev/null 2>&1; then CURL=curl; elif [ -x /data/data/com.minikano.f50_sms/files/curl ]; then CURL=/data/data/com.minikano.f50_sms/files/curl; else echo '设备缺少 curl，请安装支持 HTTPS 的 curl'; exit 1; fi`;
+    async function readRelease(source){
+        const payload=await shell(`${curlSetup}
+"$CURL" -fLsS --globoff --proto '=https' --proto-redir '=https' --connect-timeout 8 --max-time 20 -H 'Cache-Control: no-cache' ${q(source.manifest)} || { printf '\\nUFICPY_DOWNLOAD_FAILED\\n'; exit 1; }`,30000,`获取 ${source.name} 发布清单`);
+        if(payload.length>65536)throw Error(`${source.name} 发布清单超过 64 KiB，已停止安装`);
+        return parseObject(payload,source.name+' 发布清单');
+    }
+    function releaseAsset(manifest,source,repo,architecture){
+        if(manifest.schema!==1||manifest.repository!==repo||typeof manifest.tag!=='string'||!/^[A-Za-z0-9_.-]{1,120}$/.test(manifest.tag)||['.','..'].includes(manifest.tag))throw Error(`${source.name} 发布清单不符合要求，请检查仓库、版本和文件摘要；已停止安装`);
+        const a=manifest.assets?.[architecture],assetName=`uficpy-${architecture}.tar.gz`;
+        if(!a)throw Error(`${source.name} 当前发布缺少 ${architectureName(architecture)} 后端包（${assetName}）。请重新发布并同步包含该架构的新版资源；不会安装其他架构的后端。`);
+        if(a.name!==assetName||typeof a.sha256!=='string'||!/^[a-f0-9]{64}$/.test(a.sha256)||!Number.isInteger(a.size)||a.size<1024||a.size>134217728)throw Error(`${source.name} ${architectureName(architecture)} 发布清单不符合要求，请检查文件名、大小和摘要；已停止安装`);
+        return a;
+    }
+    function confirmMirrorVersion(current,candidate,fresh){
+        return new Promise(resolve=>{
+            let settled=false;
+            const settle=value=>{if(!settled){settled=true;resolve(value);}};
+            const dialog=modal({name:'uficpy_mirror_version',title:'是否改用备用源已同步的版本？',maxWidth:'640px',showConfirm:false,onClose:()=>{settle(false);return true;},
+                content:`<div style="line-height:1.7;overflow-wrap:anywhere"><p>原计划的后端包在两个下载源都未能下载。备用源提供的是另一个构建，需要你确认后才能切换。</p><p>原计划：<code>${escape(current.tag)}</code><br>备用源：<code>${escape(candidate.tag)}</code></p><p>备用源可能尚未同步最新发布，改用它可能安装较旧的版本。请确认该构建适合你的设备。${fresh?'本次仍为全新安装，会恢复默认配置并生成新令牌。':'本次仍保留现有配置；旧构建可能不支持较新的配置字段。'}</p><p>确认后会按备用清单重新校验文件大小和 SHA-256，不会更改已保存的下载顺序。</p><button id="uficpy_mirror_cancel" type="button">取消安装</button> <button id="uficpy_mirror_accept" type="button">确认使用备用源版本</button></div>`});
+            const cancel=dialog.el.querySelector('#uficpy_mirror_cancel');
+            cancel.onclick=()=>{settle(false);dismiss(dialog);};
+            dialog.el.querySelector('#uficpy_mirror_accept').onclick=()=>{settle(true);dismiss(dialog);};
+            showModal(dialog.id);cancel.focus();
+        });
+    }
     async function installLatest(fresh=false){
         const {repo,sources}=sourceSettings();let manifest,selected;
         const facts=await probeDeviceFacts(),architecture=selectDeviceArchitecture(facts);
         createToast(`设备架构：${architectureName(architecture)}`,'',10000);
         for(let i=0;i<sources.length;i++){
             const source=sources[i];createToast(`正在从 ${source.name} 获取发布清单…`,'',10000);
-            let payload;
-            try { payload=await shell(`${curlSetup}
-"$CURL" -fLsS --globoff --proto '=https' --proto-redir '=https' --connect-timeout 8 --max-time 20 -H 'Cache-Control: no-cache' ${q(source.manifest)} || { printf '\\nUFICPY_DOWNLOAD_FAILED\\n'; exit 1; }`,30000,`获取 ${source.name} 发布清单`); }
+            try { manifest=await readRelease(source); }
             catch(e){
                 if(!e.downloadFailure)throw e;
                 if(i+1===sources.length)throw Error('无法获取发布清单，请检查发布源地址、文件和设备网络。'+e.message);
                 createToast(`${source.name} 下载失败，正在尝试 ${sources[i+1].name}…`,'orange',10000);continue;
             }
-            if(payload.length>65536)throw Error(`${source.name} 发布清单超过 64 KiB，已停止安装`);
-            manifest=parseObject(payload,source.name+' 发布清单');selected=source;break;
+            selected=source;break;
         }
-        if(manifest.schema!==1||manifest.repository!==repo||typeof manifest.tag!=='string'||!/^[A-Za-z0-9_.-]{1,120}$/.test(manifest.tag)||['.','..'].includes(manifest.tag))throw Error(`${selected.name} 发布清单不符合要求，请检查仓库、版本和文件摘要；已停止安装`);
-        const a=manifest.assets?.[architecture],assetName=`uficpy-${architecture}.tar.gz`;
-        if(!a)throw Error(`${selected.name} 当前发布缺少 ${architectureName(architecture)} 后端包（${assetName}）。请重新发布并同步包含该架构的新版资源；不会安装其他架构的后端。`);
-        if(a.name!==assetName||typeof a.sha256!=='string'||!/^[a-f0-9]{64}$/.test(a.sha256)||!Number.isInteger(a.size)||a.size<1024||a.size>134217728)throw Error(`${selected.name} ${architectureName(architecture)} 发布清单不符合要求，请检查文件名、大小和摘要；已停止安装`);
+        let a=releaseAsset(manifest,selected,repo,architecture);
         createToast(`正在下载并校验 ${escape(manifest.version)} / ${architectureName(architecture)} / scrcpy ${escape(manifest.scrcpy_version)}，完成后自动安装…`,'',20000);
         frame.src='about:blank';const temp='/data/local/tmp/uficpy-download-'+Date.now()+'-'+Math.random().toString(36).slice(2,10);
         let created=false,uncertain=false,result;
@@ -308,17 +328,34 @@ fi`,10000,'读取设备架构'));
 mkdir ${q(temp)}`,10000,'准备后端下载目录');
             created=true;
             const downloads=[selected,...sources.filter(source=>source!==selected)];
+            const download=source=>shell(`${curlSetup}
+cd ${q(temp)}
+rm -f package.tar.gz
+"$CURL" -fLsS --globoff --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 55 ${q(source.asset(manifest.tag,a.name))} -o package.tar.gz || { printf '\\nUFICPY_DOWNLOAD_FAILED\\n'; exit 1; }`,75000,`从 ${source.name} 下载后端包 ${manifest.tag}`);
             for(let i=0;i<downloads.length;i++){
                 const source=downloads[i];
                 try {
-                    await shell(`${curlSetup}
-cd ${q(temp)}
-rm -f package.tar.gz
-"$CURL" -fLsS --globoff --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 55 ${q(source.asset(manifest.tag,a.name))} -o package.tar.gz || { printf '\\nUFICPY_DOWNLOAD_FAILED\\n'; exit 1; }`,75000,`从 ${source.name} 下载后端包`);
+                    await download(source);
                     break;
                 } catch(e){
                     if(!e.downloadFailure)throw e;
-                    if(i+1===downloads.length)throw Error(`无法下载 ${manifest.tag}。${sources.some(source=>source.name==='备用源')?'请确认该版本的后端包已同步到备用源；不会改装其他版本。':'请检查设备网络和 Release 资源。'}`+e.message);
+                    if(i+1===downloads.length){
+                        const backup=selected.name==='GitHub'&&sources.find(source=>source.name==='备用源');
+                        if(!backup)throw Error(`无法下载 ${manifest.tag}，请检查设备网络及对应版本的后端包是否完整。`+e.message);
+                        createToast(`无法下载 ${escape(manifest.tag)}，正在检查备用源已同步的版本…`,'orange',10000);
+                        const candidate=await readRelease(backup),nextAsset=releaseAsset(candidate,backup,repo,architecture);
+                        if(candidate.tag===manifest.tag){
+                            if(nextAsset.sha256!==a.sha256||nextAsset.size!==a.size)throw Error(`两个来源的 ${manifest.tag} 清单大小或摘要不一致，已停止安装。请重新同步同一条 Release 的清单和安装包。`);
+                            throw Error(`两个来源都无法下载 ${manifest.tag}，备用清单也指向该版本。请检查设备网络，以及备用源是否上传了清单对应的后端包。`+e.message);
+                        }
+                        if(!await confirmMirrorVersion(manifest,candidate,fresh))throw Error('已取消改用备用源版本，尚未执行后端安装。');
+                        // A confirmed version change is a new download plan. Its
+                        // own digest/size are used below, and it is tried once.
+                        manifest=candidate;a=nextAsset;selected=backup;
+                        createToast(`正在从备用源下载 ${escape(manifest.tag)}，完成校验后安装…`,'',20000);
+                        await download(backup);
+                        break;
+                    }
                     createToast(`${source.name} 下载失败，改用 ${downloads[i+1].name} 下载同一版本 ${escape(manifest.tag)}…`,'orange',10000);
                 }
             }

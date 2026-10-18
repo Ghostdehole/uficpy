@@ -4,12 +4,15 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"regexp"
 	"unicode/utf8"
 )
 
 const maxPacket = 32 << 20
 const configFlag uint64 = 1 << 62
 const keyFlag uint64 = 1 << 61
+
+var androidPackageName = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$`)
 
 type packet struct {
 	data        []byte
@@ -37,7 +40,7 @@ func readPacket(r io.Reader) (packet, error) {
 	return packet{b, flags&configFlag != 0, flags&keyFlag != 0}, nil
 }
 
-// Expose touch, scroll, short UTF-8 text and explicitly approved keys.
+// Expose validated scrcpy controls, short UTF-8 text and approved keys.
 // Volume keys require their own opt-in even if present in the custom allowlist.
 func validControl(b []byte) bool { return validControlFor(b, defaults()) }
 func validControlFor(b []byte, c Config) bool {
@@ -66,6 +69,17 @@ func validControlFor(b []byte, c Config) bool {
 		return len(b) >= 5 && len(b) <= 1029 && int(binary.BigEndian.Uint32(b[1:5])) == len(b)-5 && utf8.Valid(b[5:])
 	case 9:
 		return len(b) >= 14 && len(b) <= 1038 && binary.BigEndian.Uint64(b[1:9]) == 0 && b[9] <= 1 && int(binary.BigEndian.Uint32(b[10:14])) == len(b)-14 && utf8.Valid(b[14:])
+	case 5, 6, 7, 11:
+		return len(b) == 1
+	case 8:
+		// Read the existing clipboard only; never inject Copy or Cut keys.
+		return len(b) == 2 && b[1] == 0
+	case 10:
+		return len(b) == 2 && b[1] <= 1
+	case 16:
+		// scrcpy also accepts name search and force-stop prefixes. Only exact
+		// package names are exposed here, with its one-byte UTF-8 length.
+		return len(b) >= 3 && len(b) <= 257 && int(b[1]) == len(b)-2 && androidPackageName.Match(b[2:])
 	case 2:
 		if len(b) != 32 || b[1] > 2 {
 			return false

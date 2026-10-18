@@ -42,5 +42,6 @@
   "max_clients": 8,
   "queue_mb": 16,
   "gop_mb": 8,
-  "idle_seconds": 2
+  "idle_seconds": 2,
+  "audio_source": "output"
 }
